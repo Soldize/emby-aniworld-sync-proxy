@@ -386,8 +386,8 @@ def _set_hoster_cache(slug, season, episode, hosters):
         conn.execute("DELETE FROM stream_cache WHERE slug=? AND season=? AND episode=?", (slug, season, episode))
         for h in hosters:
             conn.execute(
-                "INSERT INTO stream_cache (slug, season, episode, hoster, language, lang_key, redirect_url, redirect_cached_at) VALUES (?,?,?,?,?,?,?,?)",
-                (slug, season, episode, h.get("name"), h.get("language"), h.get("langKey"), h["redirectUrl"], now)
+                "INSERT INTO stream_cache (slug, season, episode, hoster, language, lang_key, redirect_url, redirect_cached_at, cached_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (slug, season, episode, h.get("name"), h.get("language"), h.get("langKey"), h["redirectUrl"], now, now)
             )
         conn.commit()
     finally:
