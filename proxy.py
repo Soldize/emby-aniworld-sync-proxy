@@ -345,6 +345,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <!-- Detail Scrape -->
 <div class="section">
   <h2>Detail Scrape</h2>
+  <div id="scrape-status" style="margin-bottom:12px; padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:0.9rem;"></div>
   <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
     <button class="btn btn-start" id="btn-detail-batch" onclick="detailBatch()">🔄 Batch Scrape</button>
     <span style="color:var(--muted);margin:0 4px;">oder</span>
@@ -413,6 +414,35 @@ function renderStatus(data) {
     clearInterval(logInterval);
     logInterval = null;
     fetchLog(); // letztes Update
+  }
+
+  // Scrape Status
+  const apiDetail = data.api && data.api.detail;
+  const scrapeBox = document.getElementById('scrape-status');
+  if (apiDetail && apiDetail.animeCount !== undefined) {
+    const total = apiDetail.animeCount;
+    const scraped = apiDetail.detailsScraped || 0;
+    const pending = apiDetail.detailsPending || 0;
+    const running = apiDetail.detailSyncRunning;
+    const pct = total > 0 ? Math.round((scraped / total) * 100) : 0;
+
+    let statusIcon = running ? '🔄' : (pending === 0 ? '✅' : '⏸️');
+    let statusText = running ? 'Läuft...' : (pending === 0 ? 'Komplett' : 'Pausiert');
+
+    scrapeBox.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span>${statusIcon} <strong>Scrape Status:</strong> ${statusText}</span>
+        <span style="color:var(--accent); font-weight:600;">${pct}%</span>
+      </div>
+      <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden;">
+        <div style="background:${pending === 0 ? 'var(--green)' : 'var(--accent)'}; height:100%; width:${pct}%; transition:width 0.5s;"></div>
+      </div>
+      <div style="margin-top:6px; font-size:0.8rem; color:var(--muted);">
+        ${scraped} / ${total} Anime gescraped — ${pending} offen
+      </div>
+    `;
+  } else {
+    scrapeBox.innerHTML = '<span style="color:var(--muted);">Scrape Status: API nicht erreichbar</span>';
   }
 }
 
