@@ -268,37 +268,18 @@ start_services() {
 
     systemctl enable aniworld-api aniworld-metadata aniworld-proxy aniworld-sync.timer
     systemctl start aniworld-api
+    echo -e "  Warte auf API Server..."
     sleep 3
     systemctl start aniworld-metadata
+    echo -e "  Warte auf Metadata Server..."
     sleep 2
     systemctl start aniworld-proxy
-    sleep 1
+    echo -e "  Warte auf Proxy/Dashboard..."
+    sleep 2
     systemctl enable --now aniworld-sync.timer
-
+    echo -e "  Sync Timer aktiviert."
+    sleep 2
     echo ""
-    sleep 3
-
-    # Prüfen ob alles läuft
-    local all_ok=true
-    for svc in aniworld-api aniworld-metadata aniworld-proxy; do
-        if ! systemctl is-active --quiet $svc; then
-            echo -e "${RED}⚠️  $svc ist nicht gestartet!${NC}"
-            echo -e "${RED}   Log: journalctl -u $svc -n 20${NC}"
-            all_ok=false
-        fi
-    done
-    if ! systemctl is-active --quiet aniworld-sync.timer; then
-        echo -e "${RED}⚠️  aniworld-sync.timer ist nicht aktiv!${NC}"
-        all_ok=false
-    fi
-
-    if $all_ok; then
-        echo -e "${GREEN}✅ Alle Services laufen!${NC}"
-    else
-        echo -e "${YELLOW}⚠️  Nicht alle Services konnten gestartet werden. Siehe Logs oben.${NC}"
-    fi
-    echo ""
-    status_check
 }
 
 restart_services() {
@@ -309,30 +290,41 @@ restart_services() {
     systemctl restart aniworld-metadata
     sleep 2
     systemctl restart aniworld-proxy
-    sleep 1
-    # Timer auch sicherstellen
+    sleep 2
     systemctl enable --now aniworld-sync.timer 2>/dev/null || true
-
     echo ""
-    sleep 3
+    verify_services
+}
 
-    # Prüfen ob alles läuft
+verify_services() {
+    echo -e "${YELLOW}Prüfe ob alles läuft...${NC}"
+    echo ""
+
     local all_ok=true
+
     for svc in aniworld-api aniworld-metadata aniworld-proxy; do
-        if ! systemctl is-active --quiet $svc; then
-            echo -e "${RED}⚠️  $svc ist nicht gestartet!${NC}"
-            echo -e "${RED}   Log: journalctl -u $svc -n 20${NC}"
+        if systemctl is-active --quiet $svc; then
+            echo -e "  ${GREEN}✅ $svc läuft${NC}"
+        else
+            echo -e "  ${RED}❌ $svc läuft NICHT${NC}"
+            echo -e "     ${RED}→ journalctl -u $svc -n 20${NC}"
             all_ok=false
         fi
     done
+    if systemctl is-active --quiet aniworld-sync.timer; then
+        echo -e "  ${GREEN}✅ aniworld-sync.timer aktiv${NC}"
+    else
+        echo -e "  ${RED}❌ aniworld-sync.timer NICHT aktiv${NC}"
+        all_ok=false
+    fi
 
+    echo ""
     if $all_ok; then
         echo -e "${GREEN}✅ Alle Services laufen!${NC}"
     else
-        echo -e "${YELLOW}⚠️  Nicht alle Services konnten gestartet werden. Siehe Logs oben.${NC}"
+        echo -e "${YELLOW}⚠️  Nicht alle Services konnten gestartet werden.${NC}"
     fi
     echo ""
-    status_check
 }
 
 # ── Komplettinstallation ───────────────────────────────────────────
@@ -363,31 +355,11 @@ full_install() {
 }
 
 post_install_check() {
-    echo -e "${YELLOW}Prüfe Installation...${NC}"
-    echo ""
-    sleep 2
-
-    local all_ok=true
-
-    # Services prüfen
-    for svc in aniworld-api aniworld-metadata aniworld-proxy; do
-        if systemctl is-active --quiet $svc; then
-            echo -e "  ${GREEN}✅ $svc läuft${NC}"
-        else
-            echo -e "  ${RED}❌ $svc läuft NICHT${NC}"
-            echo -e "     ${RED}→ journalctl -u $svc -n 20${NC}"
-            all_ok=false
-        fi
-    done
-    if systemctl is-active --quiet aniworld-sync.timer; then
-        echo -e "  ${GREEN}✅ aniworld-sync.timer aktiv${NC}"
-    else
-        echo -e "  ${RED}❌ aniworld-sync.timer NICHT aktiv${NC}"
-        all_ok=false
-    fi
+    # Services checken
+    verify_services
 
     # API erreichbar?
-    echo ""
+    local all_ok=true
     echo -n "  API Server erreichbar ... "
     if curl -sf "http://localhost:$API_PORT/api/status" > /dev/null 2>&1; then
         echo -e "${GREEN}✅${NC}"
@@ -405,11 +377,18 @@ post_install_check() {
         all_ok=false
     fi
 
+    # Nochmal alle Services checken für Gesamtergebnis
+    for svc in aniworld-api aniworld-metadata aniworld-proxy aniworld-sync.timer; do
+        if ! systemctl is-active --quiet $svc; then
+            all_ok=false
+        fi
+    done
+
     echo ""
 
     if $all_ok; then
         echo -e "${GREEN}=========================================${NC}"
-        echo -e "${GREEN} ✅ Installation erfolgreich!${NC}"
+        echo -e "${GREEN} ✅ Erfolgreich installiert!${NC}"
         echo -e "${GREEN}=========================================${NC}"
         echo ""
         echo -e "${BOLD}${CYAN}╔═══════════════════════════════════════════════╗${NC}"
