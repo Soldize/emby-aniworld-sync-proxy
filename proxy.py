@@ -241,6 +241,18 @@ async def config_save(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/dashboard/incremental-sync")
+async def incremental_sync():
+    """Incremental Sync über API-Server starten (nur Änderungen)."""
+    try:
+        r = requests.post(f"{API_BASE}/api/sync/incremental", timeout=10)
+        if r.ok:
+            return r.json()
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    except requests.ConnectionError:
+        raise HTTPException(status_code=502, detail="API Server nicht erreichbar")
+
+
 @app.post("/api/dashboard/detail-scrape/batch")
 async def detail_scrape_batch():
     """Batch Detail-Scrape über API-Server starten."""
@@ -352,6 +364,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 <!-- Status Cards -->
 <div class="grid" id="status-grid"></div>
+
+<!-- Aniworld Scrape -->
+<div class="section">
+  <h2>Aniworld Scrape</h2>
+  <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
+    <button class="btn btn-start" id="btn-incremental" onclick="incrementalSync()">🔄 Änderungen scrapen</button>
+    <span style="color:var(--muted); font-size:0.85rem;">(neue Serien + Episoden von aniworld.to)</span>
+  </div>
+  <div id="incremental-result" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
+</div>
 
 <!-- Sync Control -->
 <div class="section">
@@ -527,6 +549,21 @@ async function configSave() {
     if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
     toast('Config gespeichert!');
   } catch(e) { toast('Fehler: ' + e, false); }
+}
+
+async function incrementalSync() {
+  const btn = document.getElementById('btn-incremental');
+  btn.disabled = true;
+  document.getElementById('incremental-result').textContent = 'Scrape läuft...';
+  try {
+    const r = await fetch(API + '/api/dashboard/incremental-sync', {method:'POST'});
+    if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
+    toast('Änderungen werden gescraped (ca. 5-15 Min.)');
+    document.getElementById('incremental-result').innerHTML =
+      '✅ Incremental Sync gestartet - neue Serien + Episoden werden geprüft (ca. 5-15 Min.)';
+    fetchStatus();
+  } catch(e) { toast('Fehler: ' + e, false); }
+  finally { setTimeout(() => btn.disabled = false, 5000); }
 }
 
 async function detailBatch() {
