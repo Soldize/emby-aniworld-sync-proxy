@@ -1458,6 +1458,20 @@ def trigger_incremental_sync():
 
 
 # Backward-compat alias: old plugin versions call /api/scrape/episodes
+@app.route("/api/scrape/detail/<slug>", methods=["POST"])
+def trigger_single_detail_scrape(slug):
+    """Scrape details for a single anime by slug."""
+    db = get_db()
+    row = db.execute("SELECT slug, title FROM anime WHERE slug=?", (slug,)).fetchone()
+    if not row:
+        return jsonify({"error": f"Anime '{slug}' nicht gefunden"}), 404
+    try:
+        sync_anime_details(slug)
+        return jsonify({"status": "ok", "slug": slug, "title": row["title"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/scrape/episodes", methods=["POST"])
 def trigger_episode_scrape():
     """Backward-compat alias for /api/sync/full."""
