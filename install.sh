@@ -256,23 +256,48 @@ EOF
 set_permissions() {
     echo -e "${YELLOW}Setze Berechtigungen...${NC}"
     chown -R emby:emby "$INSTALL_DIR" "$DATA_DIR" "$CONFIG_DIR" "$MEDIA_PATH"
+    # venv muss auch für emby lesbar sein
+    chmod -R o+rX "$INSTALL_DIR/venv" 2>/dev/null || true
     echo -e "${GREEN}✅ Berechtigungen gesetzt${NC}"
 }
 
 start_services() {
     echo -e "${YELLOW}Starte Services...${NC}"
     systemctl daemon-reload
-    systemctl stop aniworld-api aniworld-metadata aniworld-proxy 2>/dev/null || true
+    systemctl stop aniworld-api aniworld-metadata aniworld-proxy aniworld-sync.timer 2>/dev/null || true
+
     systemctl enable aniworld-api aniworld-metadata aniworld-proxy aniworld-sync.timer
     systemctl start aniworld-api
-    sleep 2
+    sleep 3
     systemctl start aniworld-metadata
-    sleep 1
-    systemctl start aniworld-proxy
-    systemctl start aniworld-sync.timer
-    echo -e "${GREEN}✅ Services gestartet${NC}"
-    echo ""
     sleep 2
+    systemctl start aniworld-proxy
+    sleep 1
+    systemctl enable --now aniworld-sync.timer
+
+    echo ""
+    sleep 3
+
+    # Prüfen ob alles läuft
+    local all_ok=true
+    for svc in aniworld-api aniworld-metadata aniworld-proxy; do
+        if ! systemctl is-active --quiet $svc; then
+            echo -e "${RED}⚠️  $svc ist nicht gestartet!${NC}"
+            echo -e "${RED}   Log: journalctl -u $svc -n 20${NC}"
+            all_ok=false
+        fi
+    done
+    if ! systemctl is-active --quiet aniworld-sync.timer; then
+        echo -e "${RED}⚠️  aniworld-sync.timer ist nicht aktiv!${NC}"
+        all_ok=false
+    fi
+
+    if $all_ok; then
+        echo -e "${GREEN}✅ Alle Services laufen!${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Nicht alle Services konnten gestartet werden. Siehe Logs oben.${NC}"
+    fi
+    echo ""
     status_check
 }
 
@@ -280,13 +305,33 @@ restart_services() {
     echo -e "${YELLOW}Restarte Services...${NC}"
     systemctl daemon-reload
     systemctl restart aniworld-api
-    sleep 2
+    sleep 3
     systemctl restart aniworld-metadata
-    sleep 1
-    systemctl restart aniworld-proxy
-    echo -e "${GREEN}✅ Services restarted${NC}"
-    echo ""
     sleep 2
+    systemctl restart aniworld-proxy
+    sleep 1
+    # Timer auch sicherstellen
+    systemctl enable --now aniworld-sync.timer 2>/dev/null || true
+
+    echo ""
+    sleep 3
+
+    # Prüfen ob alles läuft
+    local all_ok=true
+    for svc in aniworld-api aniworld-metadata aniworld-proxy; do
+        if ! systemctl is-active --quiet $svc; then
+            echo -e "${RED}⚠️  $svc ist nicht gestartet!${NC}"
+            echo -e "${RED}   Log: journalctl -u $svc -n 20${NC}"
+            all_ok=false
+        fi
+    done
+
+    if $all_ok; then
+        echo -e "${GREEN}✅ Alle Services laufen!${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Nicht alle Services konnten gestartet werden. Siehe Logs oben.${NC}"
+    fi
+    echo ""
     status_check
 }
 
@@ -322,10 +367,12 @@ post_install_info() {
     echo -e "${GREEN} ✅ Installation abgeschlossen!${NC}"
     echo -e "${GREEN}=========================================${NC}"
     echo ""
-    echo -e "${BOLD}Zugriff:${NC}"
-    echo "  API Server:      http://localhost:$API_PORT/api/status"
-    echo "  Metadata Server: http://localhost:$META_PORT/status"
-    echo -e "  ${CYAN}📊 Dashboard:      http://localhost:$PROXY_PORT/${NC}"
+    echo -e "${BOLD}${CYAN}╔═══════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}${CYAN}║  📊 Dashboard: http://localhost:$PROXY_PORT/         ║${NC}"
+    echo -e "${BOLD}${CYAN}╚═══════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  Öffne das Dashboard im Browser um alles zu steuern:"
+    echo -e "  Status, Sync, Detail-Scrape und Config - alles über die Web-UI."
     echo ""
     echo -e "${BOLD}Pfade:${NC}"
     echo "  Daten:  $DATA_DIR"
@@ -335,14 +382,15 @@ post_install_info() {
     echo -e "${YELLOW}Nächste Schritte:${NC}"
     echo ""
     echo "  1. Dashboard öffnen: http://localhost:$PROXY_PORT/"
-    echo "     Dort kannst du Sync starten, Detail-Scrapes ausführen"
-    echo "     und die Config bearbeiten."
     echo ""
-    echo "  2. Alternativ per CLI:"
-    echo "     curl -X POST http://localhost:$API_PORT/api/sync"
-    echo "     curl -X POST http://localhost:$API_PORT/api/sync/details"
+    echo "  2. Der API-Server scrapt den Katalog automatisch beim Start."
+    echo "     Im Dashboard kannst du den Detail-Scrape manuell starten"
+    echo "     (holt Cover, Beschreibungen, Staffel-Infos)."
     echo ""
-    echo "  3. In Emby: Neue Bibliothek erstellen"
+    echo "  3. Danach im Dashboard 'Sync > Starten' klicken"
+    echo "     um .strm Dateien zu generieren."
+    echo ""
+    echo "  4. In Emby: Neue Bibliothek erstellen"
     echo "     Typ:  TV-Sendungen"
     echo "     Pfad: $MEDIA_PATH"
     echo "     Name: AniWorld"
