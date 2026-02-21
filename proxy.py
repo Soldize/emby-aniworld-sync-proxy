@@ -1480,6 +1480,50 @@ function toggleAutoLog() {
 // === Crons ===
 let cronsData = {};
 
+function describeCron(expr) {
+  try {
+    const p = expr.trim().split(/\s+/);
+    if (p.length !== 5) return '(ungültig)';
+    const [min, hour, dom, mon, dow] = p;
+    const dowNames = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+
+    // Every minute
+    if (min === '*' && hour === '*' && dom === '*' && mon === '*' && dow === '*') return '(jede Minute)';
+
+    // */N minutes
+    if (min.startsWith('*/') && hour === '*' && dom === '*') {
+      return `(alle ${min.slice(2)} Min.)`;
+    }
+
+    // Every N hours
+    if (min !== '*' && hour.startsWith('*/') && dom === '*') {
+      return `(alle ${hour.slice(2)}h um :${min.padStart(2,'0')})`;
+    }
+
+    // Specific hour(s)
+    if (min !== '*' && !hour.includes('*') && !hour.includes('/') && dom === '*' && mon === '*') {
+      const time = `${hour.padStart(2,'0')}:${min.padStart(2,'0')}`;
+      if (dow === '*') return `(täglich ${time})`;
+      // Specific weekday(s)
+      const days = dow.split(',').map(d => dowNames[parseInt(d)] || d).join(', ');
+      return `(${days} ${time})`;
+    }
+
+    // Specific dom
+    if (min !== '*' && hour !== '*' && dom !== '*' && dom !== '*/') {
+      return `(Tag ${dom}, ${hour.padStart(2,'0')}:${min.padStart(2,'0')})`;
+    }
+
+    return '(benutzerdefiniert)';
+  } catch(e) { return '(ungültig)'; }
+}
+
+function updateCronHint(id) {
+  const input = document.getElementById('cron-schedule-' + id);
+  const hint = document.getElementById('cron-hint-' + id);
+  if (input && hint) hint.textContent = describeCron(input.value);
+}
+
 async function loadCrons() {
   try {
     const r = await fetch(API + '/api/dashboard/crons');
@@ -1503,9 +1547,11 @@ function renderCrons() {
             <strong style="font-size:0.95rem;">${job.name}</strong>
           </label>
           <input type="text" id="cron-schedule-${id}" value="${job.schedule}" placeholder="* * * * *"
-            onchange="cronsData['${id}'].schedule = this.value"
+            onchange="cronsData['${id}'].schedule = this.value; updateCronHint('${id}')"
+            oninput="updateCronHint('${id}')"
             style="padding:6px 10px; border:1px solid var(--border); border-radius:4px;
               background:var(--bg); color:var(--text); font-family:monospace; font-size:0.9rem; width:160px;">
+          <span id="cron-hint-${id}" style="color:var(--muted); font-size:0.8rem; min-width:120px;">${describeCron(job.schedule)}</span>
           <button class="btn btn-start" onclick="cronRunNow('${id}')" style="padding:4px 12px; font-size:0.8rem;">
             ▶ Jetzt
           </button>
