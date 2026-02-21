@@ -148,12 +148,37 @@ def init_db():
             hoster TEXT,
             language TEXT,
             lang_key INTEGER,
-            redirect_url TEXT NOT NULL,
-            cached_at TEXT NOT NULL,
+            redirect_url TEXT,
+            redirect_cached_at TEXT,
+            stream_url TEXT,
+            stream_cached_at TEXT,
+            failed_at TEXT,
+            last_accessed TEXT,
+            cached_at TEXT,
             UNIQUE(slug, season, episode, hoster, lang_key)
         );
         CREATE INDEX IF NOT EXISTS idx_stream_lookup ON stream_cache(slug, season, episode);
     """)
+
+    # Migrate: add missing columns to stream_cache (for existing DBs)
+    try:
+        cur = conn.execute("PRAGMA table_info(stream_cache)")
+        cols = {row[1] for row in cur.fetchall()}
+        migrations = {
+            "redirect_cached_at": "ALTER TABLE stream_cache ADD COLUMN redirect_cached_at TEXT",
+            "stream_url": "ALTER TABLE stream_cache ADD COLUMN stream_url TEXT",
+            "stream_cached_at": "ALTER TABLE stream_cache ADD COLUMN stream_cached_at TEXT",
+            "failed_at": "ALTER TABLE stream_cache ADD COLUMN failed_at TEXT",
+            "last_accessed": "ALTER TABLE stream_cache ADD COLUMN last_accessed TEXT",
+        }
+        for col, sql in migrations.items():
+            if col not in cols:
+                conn.execute(sql)
+                log.info(f"Migrated stream_cache: added column {col}")
+        conn.commit()
+    except Exception as e:
+        log.warning(f"stream_cache migration check failed: {e}")
+
     conn.close()
 
 # --- Episode Scraper ---
