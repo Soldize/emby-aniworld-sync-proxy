@@ -241,6 +241,18 @@ async def config_save(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/dashboard/metadata-sync")
+async def metadata_sync():
+    """Metadata-Server Sync starten (AniList Metadata aktualisieren)."""
+    try:
+        r = requests.post(f"{META_BASE}/sync", timeout=10)
+        if r.ok:
+            return r.json()
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    except requests.ConnectionError:
+        raise HTTPException(status_code=502, detail="Metadata Server nicht erreichbar")
+
+
 @app.post("/api/dashboard/incremental-sync")
 async def incremental_sync():
     """Incremental Sync über API-Server starten (nur Änderungen)."""
@@ -373,6 +385,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <span style="color:var(--muted); font-size:0.85rem;">(neue Serien + Episoden von aniworld.to)</span>
   </div>
   <div id="incremental-result" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
+</div>
+
+<!-- Metadata Sync -->
+<div class="section">
+  <h2>Metadata Server</h2>
+  <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
+    <button class="btn btn-start" id="btn-meta-sync" onclick="metadataSync()">🔄 Metadata aktualisieren</button>
+    <span style="color:var(--muted); font-size:0.85rem;">(Cover, Beschreibungen, Genres von AniList/MAL)</span>
+  </div>
+  <div id="meta-result" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
 </div>
 
 <!-- Sync Control -->
@@ -549,6 +571,20 @@ async function configSave() {
     if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
     toast('Config gespeichert!');
   } catch(e) { toast('Fehler: ' + e, false); }
+}
+
+async function metadataSync() {
+  const btn = document.getElementById('btn-meta-sync');
+  btn.disabled = true;
+  document.getElementById('meta-result').textContent = 'Metadata Sync läuft...';
+  try {
+    const r = await fetch(API + '/api/dashboard/metadata-sync', {method:'POST'});
+    if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
+    toast('Metadata Sync gestartet!');
+    document.getElementById('meta-result').innerHTML =
+      '✅ AniList Metadata Sync gestartet - Cover, Beschreibungen und Genres werden aktualisiert';
+  } catch(e) { toast('Fehler: ' + e, false); }
+  finally { setTimeout(() => btn.disabled = false, 5000); }
 }
 
 async function incrementalSync() {
