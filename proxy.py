@@ -136,8 +136,8 @@ async def dashboard_status():
 
     # Metadata Server
     try:
-        r = requests.get(f"{META_BASE}/health", timeout=3)
-        services["metadata"] = {"status": "online", "port": META_PORT}
+        r = requests.get(f"{META_BASE}/status", timeout=3)
+        services["metadata"] = {"status": "online", "port": META_PORT, "detail": r.json() if r.ok else {}}
     except Exception:
         services["metadata"] = {"status": "offline", "port": META_PORT}
 
@@ -390,6 +390,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <!-- Metadata Sync -->
 <div class="section">
   <h2>Metadata Server</h2>
+  <div id="meta-status" style="margin-bottom:12px; padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:0.9rem;"></div>
   <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
     <button class="btn btn-start" id="btn-meta-sync" onclick="metadataSync()">🔄 Metadata aktualisieren</button>
     <span style="color:var(--muted); font-size:0.85rem;">(Cover, Beschreibungen, Genres von AniList/MAL)</span>
@@ -510,6 +511,54 @@ function renderStatus(data) {
   } else {
     scrapeBox.innerHTML = '<span style="color:var(--muted);">Scrape Status: API nicht erreichbar</span>';
   }
+
+  // Metadata Sync Status
+  const metaDetail = data.metadata && data.metadata.detail;
+  const metaBox = document.getElementById('meta-status');
+  const metaBtn = document.getElementById('btn-meta-sync');
+
+  if (metaDetail) {
+    const running = metaDetail.syncRunning;
+    const prog = metaDetail.syncProgress || {};
+    const total = prog.total || 0;
+    const done = prog.done || 0;
+    const fetched = prog.fetched || 0;
+    const skipped = prog.skipped || 0;
+    const errors = prog.errors || 0;
+    const metaTotal = metaDetail.total_metadata || 0;
+    const coversCached = metaDetail.covers_cached || 0;
+
+    // Button sperren/freigeben
+    if (metaBtn) metaBtn.disabled = running;
+
+    if (running && total > 0) {
+      const pct = Math.round((done / total) * 100);
+      metaBox.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span>🔄 <strong>Sync läuft...</strong></span>
+          <span style="color:var(--accent); font-weight:600;">${pct}%</span>
+        </div>
+        <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden;">
+          <div style="background:var(--accent); height:100%; width:${pct}%; transition:width 0.5s;"></div>
+        </div>
+        <div style="margin-top:6px; font-size:0.8rem; color:var(--muted);">
+          ${done} / ${total} — ${fetched} aktualisiert, ${skipped} übersprungen${errors > 0 ? `, ${errors} Fehler` : ''}
+        </div>
+      `;
+    } else if (running) {
+      metaBox.innerHTML = '<span>🔄 <strong>Sync läuft...</strong> Anime-Liste wird geladen...</span>';
+    } else {
+      metaBox.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span>✅ <strong>${metaTotal}</strong> Anime mit Metadata</span>
+          <span style="font-size:0.8rem; color:var(--muted);">${coversCached} Cover gecacht</span>
+        </div>
+      `;
+    }
+  } else {
+    if (metaBox) metaBox.innerHTML = '<span style="color:var(--muted);">Metadata Status: Server nicht erreichbar</span>';
+    if (metaBtn) metaBtn.disabled = false;
+  }
 }
 
 async function syncStart() {
@@ -576,15 +625,15 @@ async function configSave() {
 async function metadataSync() {
   const btn = document.getElementById('btn-meta-sync');
   btn.disabled = true;
-  document.getElementById('meta-result').textContent = 'Metadata Sync läuft...';
+  document.getElementById('meta-result').textContent = 'Metadata Sync wird gestartet...';
   try {
     const r = await fetch(API + '/api/dashboard/metadata-sync', {method:'POST'});
-    if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
+    if (!r.ok) { const e = await r.json(); toast(e.detail, false); btn.disabled = false; return; }
     toast('Metadata Sync gestartet!');
     document.getElementById('meta-result').innerHTML =
-      '✅ AniList Metadata Sync gestartet - Cover, Beschreibungen und Genres werden aktualisiert';
-  } catch(e) { toast('Fehler: ' + e, false); }
-  finally { setTimeout(() => btn.disabled = false, 5000); }
+      '✅ AniList Metadata Sync gestartet';
+    fetchStatus();
+  } catch(e) { toast('Fehler: ' + e, false); btn.disabled = false; }
 }
 
 async function incrementalSync() {

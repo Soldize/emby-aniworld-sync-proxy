@@ -730,12 +730,21 @@ def get_all_anime_from_api() -> list[dict]:
     return all_anime
 
 
+_meta_sync_running = False
+_meta_sync_progress = {"total": 0, "done": 0, "fetched": 0, "skipped": 0, "errors": 0}
+
+
 def sync_metadata():
     """Full AniList sync: fetch anime list, update missing/stale metadata, cleanup orphans."""
+    global _meta_sync_running, _meta_sync_progress
+    _meta_sync_running = True
+    _meta_sync_progress = {"total": 0, "done": 0, "fetched": 0, "skipped": 0, "errors": 0}
+
     log.info("Starting AniList metadata sync...")
     anime_list = get_all_anime_from_api()
     if not anime_list:
         log.warning("No anime from API server, skipping sync")
+        _meta_sync_running = False
         return
 
     api_slugs = {a["slug"] for a in anime_list}
@@ -749,6 +758,7 @@ def sync_metadata():
     fetched = 0
     skipped = 0
     errors = 0
+    _meta_sync_progress["total"] = len(anime_list)
 
     for anime in anime_list:
         slug = anime["slug"]
@@ -762,6 +772,8 @@ def sync_metadata():
                     last = last.replace(tzinfo=timezone.utc)
                 if (now - last).days < REFRESH_DAYS:
                     skipped += 1
+                    _meta_sync_progress["done"] = fetched + skipped + errors
+                    _meta_sync_progress["skipped"] = skipped
                     continue
             except (ValueError, TypeError):
                 pass
@@ -770,6 +782,11 @@ def sync_metadata():
             fetched += 1
         else:
             errors += 1
+
+        _meta_sync_progress["done"] = fetched + skipped + errors
+        _meta_sync_progress["fetched"] = fetched
+        _meta_sync_progress["skipped"] = skipped
+        _meta_sync_progress["errors"] = errors
 
     # Cleanup: remove anime no longer in API server
     orphans = set(existing.keys()) - api_slugs
@@ -787,6 +804,7 @@ def sync_metadata():
         conn.commit()
 
     conn.close()
+    _meta_sync_running = False
     log.info(
         "AniList sync done: fetched=%d, skipped=%d, errors=%d, orphans=%d",
         fetched, skipped, errors, len(orphans),
@@ -937,6 +955,8 @@ def get_status():
         "episode_rows":       ep_total,
         "episode_slugs":      ep_slugs,
         "anidb_client_ready": ANIDB_CLIENT != "REGISTER_PENDING",
+        "syncRunning":        _meta_sync_running,
+        "syncProgress":       _meta_sync_progress,
     })
 
 
