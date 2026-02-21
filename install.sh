@@ -359,42 +359,98 @@ full_install() {
     fi
 
     start_services
-    post_install_info
+    post_install_check
 }
 
-post_install_info() {
-    echo -e "${GREEN}=========================================${NC}"
-    echo -e "${GREEN} ✅ Installation abgeschlossen!${NC}"
-    echo -e "${GREEN}=========================================${NC}"
+post_install_check() {
+    echo -e "${YELLOW}Prüfe Installation...${NC}"
     echo ""
-    echo -e "${BOLD}${CYAN}╔═══════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}${CYAN}║  📊 Dashboard: http://localhost:$PROXY_PORT/         ║${NC}"
-    echo -e "${BOLD}${CYAN}╚═══════════════════════════════════════════════╝${NC}"
+    sleep 2
+
+    local all_ok=true
+
+    # Services prüfen
+    for svc in aniworld-api aniworld-metadata aniworld-proxy; do
+        if systemctl is-active --quiet $svc; then
+            echo -e "  ${GREEN}✅ $svc läuft${NC}"
+        else
+            echo -e "  ${RED}❌ $svc läuft NICHT${NC}"
+            echo -e "     ${RED}→ journalctl -u $svc -n 20${NC}"
+            all_ok=false
+        fi
+    done
+    if systemctl is-active --quiet aniworld-sync.timer; then
+        echo -e "  ${GREEN}✅ aniworld-sync.timer aktiv${NC}"
+    else
+        echo -e "  ${RED}❌ aniworld-sync.timer NICHT aktiv${NC}"
+        all_ok=false
+    fi
+
+    # API erreichbar?
     echo ""
-    echo -e "  Öffne das Dashboard im Browser um alles zu steuern:"
-    echo -e "  Status, Sync, Detail-Scrape und Config - alles über die Web-UI."
+    echo -n "  API Server erreichbar ... "
+    if curl -sf "http://localhost:$API_PORT/api/status" > /dev/null 2>&1; then
+        echo -e "${GREEN}✅${NC}"
+    else
+        echo -e "${RED}❌${NC}"
+        all_ok=false
+    fi
+
+    # Dashboard erreichbar?
+    echo -n "  Dashboard erreichbar ... "
+    if curl -sf "http://localhost:$PROXY_PORT/" > /dev/null 2>&1; then
+        echo -e "${GREEN}✅${NC}"
+    else
+        echo -e "${RED}❌${NC}"
+        all_ok=false
+    fi
+
     echo ""
-    echo -e "${BOLD}Pfade:${NC}"
-    echo "  Daten:  $DATA_DIR"
-    echo "  Media:  $MEDIA_PATH"
-    echo "  Config: $CONFIG_DIR/config.ini"
+
+    if $all_ok; then
+        echo -e "${GREEN}=========================================${NC}"
+        echo -e "${GREEN} ✅ Installation erfolgreich!${NC}"
+        echo -e "${GREEN}=========================================${NC}"
+        echo ""
+        echo -e "${BOLD}${CYAN}╔═══════════════════════════════════════════════╗${NC}"
+        echo -e "${BOLD}${CYAN}║  📊 Dashboard: http://localhost:$PROXY_PORT/         ║${NC}"
+        echo -e "${BOLD}${CYAN}╚═══════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "  Öffne das Dashboard im Browser um alles zu steuern:"
+        echo -e "  Status, Sync, Detail-Scrape und Config - alles über die Web-UI."
+        echo ""
+        echo -e "${BOLD}Pfade:${NC}"
+        echo "  Daten:  $DATA_DIR"
+        echo "  Media:  $MEDIA_PATH"
+        echo "  Config: $CONFIG_DIR/config.ini"
+        echo ""
+        echo -e "${YELLOW}Nächste Schritte:${NC}"
+        echo ""
+        echo "  1. Dashboard öffnen: http://localhost:$PROXY_PORT/"
+        echo ""
+        echo "  2. Der API-Server scrapt den Katalog automatisch beim Start."
+        echo "     Im Dashboard kannst du den Detail-Scrape manuell starten"
+        echo "     (holt Cover, Beschreibungen, Staffel-Infos)."
+        echo ""
+        echo "  3. Danach im Dashboard 'Sync > Starten' klicken"
+        echo "     um .strm Dateien zu generieren."
+        echo ""
+        echo "  4. In Emby: Neue Bibliothek erstellen"
+        echo "     Typ:  TV-Sendungen"
+        echo "     Pfad: $MEDIA_PATH"
+        echo "     Name: AniWorld"
+    else
+        echo -e "${RED}=========================================${NC}"
+        echo -e "${RED} ⚠️  Installation mit Fehlern!${NC}"
+        echo -e "${RED}=========================================${NC}"
+        echo ""
+        echo -e "  Nicht alle Services laufen korrekt."
+        echo -e "  Prüfe die Logs mit: journalctl -u <service> -n 20"
+        echo -e "  Oder starte nochmal: sudo ./install.sh"
+    fi
+
     echo ""
-    echo -e "${YELLOW}Nächste Schritte:${NC}"
-    echo ""
-    echo "  1. Dashboard öffnen: http://localhost:$PROXY_PORT/"
-    echo ""
-    echo "  2. Der API-Server scrapt den Katalog automatisch beim Start."
-    echo "     Im Dashboard kannst du den Detail-Scrape manuell starten"
-    echo "     (holt Cover, Beschreibungen, Staffel-Infos)."
-    echo ""
-    echo "  3. Danach im Dashboard 'Sync > Starten' klicken"
-    echo "     um .strm Dateien zu generieren."
-    echo ""
-    echo "  4. In Emby: Neue Bibliothek erstellen"
-    echo "     Typ:  TV-Sendungen"
-    echo "     Pfad: $MEDIA_PATH"
-    echo "     Name: AniWorld"
-    echo ""
+    read -p "Drücke Enter um zum Menü zurückzukehren..."
 }
 
 # ── Update (nur Dateien + Restart) ─────────────────────────────────
