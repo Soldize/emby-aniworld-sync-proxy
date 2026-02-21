@@ -697,11 +697,61 @@ show_guide() {
     read -p "Drücke Enter um zurück zum Menü zu kommen..."
 }
 
+# ── Self-Update ────────────────────────────────────────────────────
+
+self_update() {
+    # Nicht updaten wenn --no-self-update übergeben wurde
+    if [ "${SKIP_SELF_UPDATE:-}" = "1" ]; then
+        return
+    fi
+
+    # Braucht curl
+    if ! command -v curl &>/dev/null; then
+        return
+    fi
+
+    echo -ne "${YELLOW}Prüfe auf Installer-Update...${NC} "
+
+    # Aktuelle install.sh von GitHub holen und Hash vergleichen
+    local tmp_installer
+    tmp_installer=$(mktemp)
+    if ! curl -sfL "$GITHUB_RAW/install.sh" -o "$tmp_installer" 2>/dev/null; then
+        echo -e "${MUTED}(offline, übersprungen)${NC}"
+        rm -f "$tmp_installer"
+        return
+    fi
+
+    # Hash vergleichen
+    local local_hash remote_hash
+    local_hash=$(md5sum "$0" 2>/dev/null | cut -d' ' -f1)
+    remote_hash=$(md5sum "$tmp_installer" 2>/dev/null | cut -d' ' -f1)
+
+    if [ "$local_hash" = "$remote_hash" ]; then
+        echo -e "${GREEN}✅ Aktuell${NC}"
+        rm -f "$tmp_installer"
+        return
+    fi
+
+    echo -e "${CYAN}Neue Version gefunden!${NC}"
+    echo -e "${YELLOW}Installer wird aktualisiert und neu gestartet...${NC}"
+
+    # Neue Version überschreiben
+    cp "$tmp_installer" "$0"
+    chmod +x "$0"
+    rm -f "$tmp_installer"
+
+    echo ""
+
+    # Neu starten mit gleichen Argumenten, aber Self-Update überspringen
+    SKIP_SELF_UPDATE=1 exec "$0" "$@"
+}
+
 # ── Main ───────────────────────────────────────────────────────────
 
 check_root
 check_emby
 load_config
+self_update "$@"
 
 # Wenn Argument übergeben, direkt ausführen
 case "${1:-}" in
