@@ -318,6 +318,31 @@ def main():
     log.info(f"Sync complete: {total} anime, {total_new} new episodes, {elapsed:.1f}s")
     log.info("=" * 60)
 
+    # Trigger Emby Library Scan if new episodes were written
+    if total_new > 0:
+        _trigger_emby_library_scan()
+
+
+def _trigger_emby_library_scan():
+    """Trigger Emby Library Scan via API (if configured)."""
+    emby_url = config.get("emby", "url", fallback=None)
+    emby_key = config.get("emby", "api_key", fallback=None)
+    if not emby_url or not emby_key:
+        log.info("Emby Library Scan: skipped (no [emby] config)")
+        return
+    try:
+        resp = requests.post(
+            f"{emby_url}/emby/Library/Refresh",
+            headers={"X-Emby-Token": emby_key},
+            timeout=10
+        )
+        if resp.ok:
+            log.info("Emby Library Scan triggered successfully")
+        else:
+            log.warning(f"Emby Library Scan failed: HTTP {resp.status_code}")
+    except Exception as e:
+        log.warning(f"Emby Library Scan failed: {e}")
+
 
 if __name__ == "__main__":
     main()

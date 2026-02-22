@@ -21,3 +21,9 @@ media_path = /media/aniworld
 [preferences]
 language = Deutsch
 hoster = VOE
+
+[emby]
+# Emby Server (für Auto Library Scan nach Sync)
+# url = http://localhost:8096
+# api_key = YOUR_EMBY_API_KEY
+# library_name = AniWorld

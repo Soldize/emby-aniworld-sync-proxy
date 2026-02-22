@@ -132,6 +132,16 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_episode_lookup ON episode(anime_slug, season_number);
 
+        CREATE TABLE IF NOT EXISTS recent_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL,
+            title TEXT,
+            change_type TEXT NOT NULL,  -- 'new_anime', 'new_season', 'new_episodes', 'new_films'
+            detail TEXT,  -- e.g. "S03: 3 neue Episoden" or "Staffel 4 hinzugefügt"
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_recent_changes_date ON recent_changes(created_at);
+
         CREATE TABLE IF NOT EXISTS sync_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             started_at TEXT NOT NULL,
@@ -555,6 +565,44 @@ def resolve_stream_urls(slug, season, episode):
     results = [{"name": r["name"], "language": r["language"], "langKey": r["langKey"], "streamUrl": r["streamUrl"]} for r in results_by_lang.values()]
     log.info(f"Resolved {len(results)} streams for {slug} S{season}E{episode}")
     return results
+
+def _trigger_emby_library_scan():
+    """Trigger Emby Library Scan via API (if configured)."""
+    emby_url = _cfg.get("emby", "url", fallback=None)
+    emby_key = _cfg.get("emby", "api_key", fallback=None)
+    if not emby_url or not emby_key:
+        log.info("Emby Library Scan: skipped (no [emby] config)")
+        return
+    try:
+        resp = requests.post(
+            f"{emby_url}/emby/Library/Refresh",
+            headers={"X-Emby-Token": emby_key},
+            timeout=10
+        )
+        if resp.ok:
+            log.info("Emby Library Scan triggered successfully")
+        else:
+            log.warning(f"Emby Library Scan failed: HTTP {resp.status_code}")
+    except Exception as e:
+        log.warning(f"Emby Library Scan failed: {e}")
+
+
+def _log_change(slug, title, change_type, detail):
+    """Log a change to the recent_changes table."""
+    try:
+        conn = get_conn()
+        if not title:
+            row = conn.execute("SELECT title FROM anime WHERE slug=?", (slug,)).fetchone()
+            title = row["title"] if row else slug
+        conn.execute(
+            "INSERT INTO recent_changes (slug, title, change_type, detail) VALUES (?,?,?,?)",
+            (slug, title, change_type, detail)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"Failed to log change for {slug}: {e}")
+
 
 def _extract_voe(url, html):
     """Extract video URL from VOE page. First tries regex, then falls back to Playwright."""
@@ -989,6 +1037,7 @@ def incremental_sync():
 
             results["new_anime"] += 1
             log.info(f"Incremental: new anime scraped: {slug}")
+            _log_change(slug, title, "new_anime", "Neu auf AniWorld")
         except Exception as e:
             log.error(f"Incremental: failed to scrape new anime {slug}: {e}")
             results["errors"] += 1
@@ -1094,6 +1143,7 @@ def incremental_sync():
                     count = scrape_season_episodes(slug, sn)
                     if count > 0:
                         anime_updated = True
+                        _log_change(slug, None, "new_season", f"Staffel {sn} ({count} Episoden)")
             elif db_seasons and live_season_nums:
                 # Same season count: quick-check last season episode count
                 # Only fetch the season page to COUNT episodes, don't scrape yet
@@ -1112,9 +1162,11 @@ def incremental_sync():
 
                     if live_ep_count > old_ep_count:
                         # New episodes found → now actually scrape them
+                        new_count = live_ep_count - old_ep_count
                         log.info(f"Incremental: {slug} S{last_sn} has new episodes ({old_ep_count} → {live_ep_count})")
                         scrape_season_episodes(slug, last_sn)
                         anime_updated = True
+                        _log_change(slug, None, "new_episodes", f"S{last_sn:02d}: {new_count} neue Episode{'n' if new_count != 1 else ''}")
                 except Exception as e:
                     log.warning(f"Incremental: quick-check failed for {slug} S{last_sn}: {e}")
 
@@ -1143,9 +1195,11 @@ def incremental_sync():
                     live_film_count = len(film_soup.select("tr[data-episode-id]"))
 
                     if live_film_count > old_film_count:
+                        new_films = live_film_count - old_film_count
                         log.info(f"Incremental: {slug} has new films ({old_film_count} → {live_film_count})")
                         scrape_film_episodes(slug)
                         anime_updated = True
+                        _log_change(slug, None, "new_films", f"{new_films} neue{'r' if new_films == 1 else ''} Film{'e' if new_films != 1 else ''}")
                 except Exception as e:
                     log.warning(f"Incremental: film quick-check failed for {slug}: {e}")
 
@@ -1157,6 +1211,11 @@ def incremental_sync():
             results["errors"] += 1
 
     log.info(f"Incremental sync done: {results}")
+
+    # Trigger Emby Library Scan if changes were found
+    if results["new_anime"] > 0 or results["updated_anime"] > 0:
+        _trigger_emby_library_scan()
+
     return results
 
 
@@ -1684,6 +1743,32 @@ def trigger_single_detail_scrape(slug):
 def trigger_episode_scrape():
     """Backward-compat alias for /api/sync/full."""
     return trigger_full_sync()
+
+
+@app.route("/api/changes")
+def get_recent_changes():
+    """Get recent changes (new anime, new episodes, etc.). Query: ?days=7&limit=100"""
+    days = request.args.get("days", default=7, type=int)
+    limit = request.args.get("limit", default=100, type=int)
+    conn = get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT slug, title, change_type, detail, created_at
+            FROM recent_changes
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (f"-{days} days", limit)).fetchall()
+    finally:
+        conn.close()
+    return jsonify([{
+        "slug": r["slug"],
+        "title": r["title"],
+        "changeType": r["change_type"],
+        "detail": r["detail"],
+        "createdAt": r["created_at"],
+    } for r in rows])
+
 
 if __name__ == "__main__":
     init_db()

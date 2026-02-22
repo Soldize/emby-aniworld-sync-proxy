@@ -614,6 +614,15 @@ async def full_sync_status():
     except Exception:
         return {"running": False, "result": None}
 
+@app.get("/api/dashboard/recent-changes")
+async def recent_changes(request: Request, days: int = 7, limit: int = 100):
+    """Letzte Änderungen vom API-Server."""
+    try:
+        r = requests.get(f"{API_BASE}/api/changes?days={days}&limit={limit}", timeout=10)
+        return JSONResponse(r.json() if r.ok else [])
+    except Exception:
+        return JSONResponse([])
+
 @app.post("/api/dashboard/detail-scrape/batch")
 async def detail_scrape_batch():
     """Batch Detail-Scrape über API-Server starten."""
@@ -865,6 +874,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <!-- Tab Navigation -->
 <div class="tabs">
   <button class="tab active" onclick="switchTab('dashboard')">📊 Dashboard</button>
+  <button class="tab" onclick="switchTab('recent')">🆕 Neu</button>
   <button class="tab" onclick="switchTab('catalog')">🔍 Katalog</button>
   <button class="tab" onclick="switchTab('config')">⚙️ Konfiguration</button>
   <button class="tab" onclick="switchTab('crons')">⏰ Crons</button>
@@ -928,6 +938,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 </div><!-- /tab-dashboard -->
+
+<!-- Tab: Zuletzt hinzugefügt -->
+<div id="tab-recent" style="display:none;">
+  <h2>🆕 Zuletzt hinzugefügt</h2>
+  <div style="margin-bottom:15px;">
+    <select id="recent-days" onchange="loadRecentChanges()" style="padding:6px 12px; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:6px;">
+      <option value="1">Letzte 24h</option>
+      <option value="3">Letzte 3 Tage</option>
+      <option value="7" selected>Letzte 7 Tage</option>
+      <option value="30">Letzte 30 Tage</option>
+    </select>
+  </div>
+  <div id="recent-list" style="font-size:0.9rem;"></div>
+</div><!-- /tab-recent -->
 
 <!-- Tab: Konfiguration -->
 <div id="tab-config" style="display:none;">
@@ -1345,8 +1369,9 @@ async function changePw() {
 // === Tab Navigation ===
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  ['dashboard','catalog','config','crons','logs','settings'].forEach(t => document.getElementById('tab-'+t).style.display = t===tab?'':'none');
+  ['dashboard','recent','catalog','config','crons','logs','settings'].forEach(t => document.getElementById('tab-'+t).style.display = t===tab?'':'none');
   event.target.classList.add('active');
+  if (tab === 'recent' && !document.getElementById('recent-list').innerHTML) loadRecentChanges();
   if (tab === 'catalog' && !document.getElementById('catalog-letters').innerHTML) loadLetters();
   if (tab === 'config' && !document.getElementById('config-editor').value) loadConfig();
   if (tab === 'crons' && !document.getElementById('crons-list').innerHTML) loadCrons();
@@ -1644,6 +1669,47 @@ async function cronRunNow(jobId) {
       toast(e.detail, false);
     }
   } catch(e) { toast('Fehler: ' + e, false); }
+}
+
+// === Recent Changes ===
+async function loadRecentChanges() {
+  const days = document.getElementById('recent-days').value;
+  const el = document.getElementById('recent-list');
+  el.innerHTML = '<span style="color:var(--muted)">Lade...</span>';
+  try {
+    const r = await fetch(API + '/api/dashboard/recent-changes?days=' + days + '&limit=200');
+    const data = await r.json();
+    if (!data || data.length === 0) {
+      el.innerHTML = '<div style="color:var(--muted); padding:20px; text-align:center;">Keine Änderungen im gewählten Zeitraum.</div>';
+      return;
+    }
+    // Group by date
+    const byDate = {};
+    data.forEach(c => {
+      const d = c.createdAt ? c.createdAt.split('T')[0] : 'Unbekannt';
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push(c);
+    });
+    const icons = {new_anime:'🆕', new_season:'📺', new_episodes:'🎬', new_films:'🎥'};
+    const labels = {new_anime:'Neuer Anime', new_season:'Neue Staffel', new_episodes:'Neue Episoden', new_films:'Neue Filme'};
+    let html = '';
+    for (const [date, changes] of Object.entries(byDate)) {
+      html += '<div style="margin-bottom:20px;">';
+      html += '<h3 style="color:var(--accent); margin:0 0 8px 0; font-size:0.95rem;">' + date + '</h3>';
+      changes.forEach(c => {
+        const icon = icons[c.changeType] || '📌';
+        const label = labels[c.changeType] || c.changeType;
+        html += '<div style="padding:6px 12px; margin:4px 0; background:var(--card); border-radius:6px; border-left:3px solid var(--accent);">';
+        html += icon + ' <strong>' + (c.title || c.slug) + '</strong>';
+        html += ' <span style="color:var(--muted); margin-left:8px;">' + (c.detail || label) + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<span style="color:var(--red)">Fehler: ' + e + '</span>';
+  }
 }
 
 // Init
