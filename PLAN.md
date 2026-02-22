@@ -124,6 +124,8 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] Episoden-Metadata von AniDB (title_de, summary, airdate) in episode.nfo
 - [x] NFOs ohne Plot werden beim Sync automatisch aktualisiert
 - [x] Fortschrittsanzeige für "Änderungen scrapen" (Live-Balken, Prozent, aktueller Anime)
+- [x] NFO thumb: Cover/Banner in tvshow.nfo, Episode Thumbnails von AniDB in episode.nfo
+- [x] Projekt umbenannt: aniworld-for-emby---all-in-one (GitHub + Gitea + lokal)
 
 ### 🔨 Offen / Geplant
 
