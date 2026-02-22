@@ -1008,7 +1008,17 @@ def incremental_sync():
     log.info(f"Incremental: {len(new_slugs)} new anime, {len(existing)} existing")
 
     # Step 3: Scrape new anime fully
+    new_total = len(new_slugs)
+    new_checked = 0
     for slug, title in new_slugs.items():
+        new_checked += 1
+        _incremental_sync_status["progress"] = {
+            "phase": "new_anime",
+            "checked": new_checked,
+            "total": new_total,
+            "current_slug": slug,
+            "new_anime": results["new_anime"],
+        }
         try:
             letter = title[0].upper() if title[0].isalpha() else "#"
             conn = get_conn()
@@ -1077,10 +1087,29 @@ def incremental_sync():
 
     total_to_check = len(to_check)
     log.info(f"Incremental: checking {total_to_check} anime for updates (skipped {skipped_finished} finished)")
+    _incremental_sync_status["progress"] = {
+        "phase": "checking",
+        "checked": 0,
+        "total": total_to_check,
+        "skipped_finished": skipped_finished,
+        "new_anime": results["new_anime"],
+        "updated": 0,
+        "errors": 0,
+        "current_slug": "",
+    }
     checked = 0
 
     for row in to_check:
         checked += 1
+        _incremental_sync_status["progress"] = {
+            "checked": checked,
+            "total": total_to_check,
+            "skipped_finished": skipped_finished,
+            "new_anime": results["new_anime"],
+            "updated": results["updated_anime"],
+            "errors": results["errors"],
+            "current_slug": row["slug"],
+        }
         if checked % 100 == 0:
             log.info(f"Incremental: progress {checked}/{total_to_check} ({results['updated_anime']} updated so far)")
         slug = row["slug"]
@@ -1690,7 +1719,7 @@ def get_full_sync_status():
     return jsonify(_full_sync_status)
 
 
-_incremental_sync_status = {"running": False, "result": None, "started_at": None, "finished_at": None}
+_incremental_sync_status = {"running": False, "result": None, "started_at": None, "finished_at": None, "progress": None}
 
 @app.route("/api/sync/incremental", methods=["POST"])
 def trigger_incremental_sync():
@@ -1703,6 +1732,7 @@ def trigger_incremental_sync():
         _incremental_sync_status["started_at"] = datetime.utcnow().isoformat()
         _incremental_sync_status["result"] = None
         _incremental_sync_status["finished_at"] = None
+        _incremental_sync_status["progress"] = None
         log.info("Incremental sync started (triggered via API)")
         try:
             result = incremental_sync()

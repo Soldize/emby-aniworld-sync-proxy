@@ -1374,7 +1374,20 @@ async function pollSyncStatus(mode, resultEl, btn) {
       const r = await fetch(API + endpoint);
       const data = await r.json();
       if (data.running) {
-        resultEl.textContent = '⏳ Scrape läuft...';
+        const p = data.progress;
+        if (p && p.total) {
+          const pct = Math.round((p.checked / p.total) * 100);
+          const bar = '█'.repeat(Math.round(pct/5)) + '░'.repeat(20-Math.round(pct/5));
+          let info = p.phase === 'new_anime'
+            ? `🆕 Neue Anime: ${p.checked}/${p.total}`
+            : `🔍 ${p.checked}/${p.total} (${pct}%)`;
+          if (p.current_slug) info += ` - ${p.current_slug}`;
+          if (p.updated) info += ` | ${p.updated} aktualisiert`;
+          if (p.skipped_finished) info += ` | ${p.skipped_finished} übersprungen`;
+          resultEl.innerHTML = `⏳ ${bar} ${info}`;
+        } else {
+          resultEl.textContent = '⏳ Scrape läuft...';
+        }
         return;
       }
       clearInterval(poll);
@@ -1395,7 +1408,7 @@ async function pollSyncStatus(mode, resultEl, btn) {
         toast(hasErrors ? 'Sync fertig (mit Fehlern)' : 'Sync erfolgreich!', !hasErrors);
       }
     } catch(e) { /* keep polling */ }
-  }, 5000);
+  }, 3000);
 }
 
 async function detailBatch() {
