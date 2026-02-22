@@ -186,6 +186,12 @@ def write_tvshow_nfo(show_dir, anime_name, metadata):
         if metadata.get("status"):
             ET.SubElement(root, "status").text = metadata["status"]
 
+        # Thumbnails
+        if metadata.get("cover_url"):
+            ET.SubElement(root, "thumb", aspect="poster").text = metadata["cover_url"]
+        if metadata.get("banner_url"):
+            ET.SubElement(root, "thumb", aspect="banner").text = metadata["banner_url"]
+
         # External IDs
         if metadata.get("anilist_id"):
             uid = ET.SubElement(root, "uniqueid", type="anilist")
@@ -220,6 +226,8 @@ def write_episode_nfo(nfo_path, anime_name, season, episode, title=None, ep_meta
             ET.SubElement(root, "plot").text = ep_meta["summary"]
         if ep_meta.get("airdate"):
             ET.SubElement(root, "aired").text = ep_meta["airdate"]
+        if ep_meta.get("thumbnail_url"):
+            ET.SubElement(root, "thumb").text = ep_meta["thumbnail_url"]
 
     with open(nfo_path, 'w', encoding='utf-8') as f:
         f.write(pretty_xml(root))
