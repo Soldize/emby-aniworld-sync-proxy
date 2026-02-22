@@ -50,7 +50,7 @@ Nach der Installation prüft das Script automatisch ob alle Services laufen.
 
 Nach der Installation erreichbar unter: **http://localhost:5081/**
 
-- **📊 Dashboard:** Service-Status, Aniworld Scrape, Metadata Sync, Detail Scrape, Sync Control, Config Editor
+- **📊 Dashboard:** Service-Status, Hoster Health, Aniworld Scrape, Metadata Sync, Detail Scrape, Sync Control, Config Editor
 - **🆕 Neu:** Zuletzt hinzugefügte Anime, Episoden, Staffeln, Filme (filterbar nach Zeitraum)
 - **🔍 Katalog:** Anime-Suche, A-Z Navigation, Detail-Ansicht mit Cover + Staffeln + Episoden
 - **📋 Logs:** Live-Logs von API/Metadata/Proxy, Filter nach Level, Auto-Refresh, farbcodiert

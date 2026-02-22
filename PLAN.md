@@ -118,6 +118,7 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] Auto Emby Library Scan nach Incremental Sync + Sync-Service (wenn [emby] Config vorhanden)
 - [x] recent_changes Tabelle trackt alle Änderungen
 - [x] Backup/Restore: Dashboard (ZIP Download/Upload) + Installer (Menüpunkte 7+8)
+- [x] Hoster Health-Monitoring: Erfolgsrate pro Hoster im Dashboard (✅/⚠️/❌, Auto-Refresh)
 
 ### 🔨 Offen / Geplant
 
