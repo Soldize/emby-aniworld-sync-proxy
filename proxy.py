@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 
 import requests
 from fastapi import FastAPI, HTTPException, Request, Cookie
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 import uvicorn
 
 # Config
@@ -614,6 +614,88 @@ async def full_sync_status():
     except Exception:
         return {"running": False, "result": None}
 
+@app.get("/api/dashboard/backup")
+async def create_backup(request: Request):
+    """Create backup ZIP of DB + Config."""
+    import zipfile
+    import io
+    from datetime import datetime as dt
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Config
+        config_path = "/etc/aniworld/config.ini"
+        if os.path.exists(config_path):
+            zf.write(config_path, "config.ini")
+        # Auth
+        auth_path = "/etc/aniworld/auth.json"
+        if os.path.exists(auth_path):
+            zf.write(auth_path, "auth.json")
+        # Databases
+        db_dir = "/opt/aniworld/data"
+        for db_name in ["aniworld.db", "metadata.db"]:
+            db_path = os.path.join(db_dir, db_name)
+            if os.path.exists(db_path):
+                zf.write(db_path, db_name)
+
+    buf.seek(0)
+    timestamp = dt.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"aniworld-backup-{timestamp}.zip"
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.post("/api/dashboard/restore")
+async def restore_backup(request: Request):
+    """Restore backup ZIP (DB + Config)."""
+    import zipfile
+    import io
+    import shutil
+    from datetime import datetime as dt
+
+    form = await request.form()
+    file = form.get("file")
+    if not file:
+        raise HTTPException(status_code=400, detail="Keine Datei hochgeladen")
+
+    content = await file.read()
+    buf = io.BytesIO(content)
+
+    try:
+        with zipfile.ZipFile(buf, 'r') as zf:
+            names = zf.namelist()
+            restored = []
+
+            # Backup current files first
+            timestamp = dt.now().strftime("%Y%m%d-%H%M%S")
+            backup_dir = f"/opt/aniworld/data/pre-restore-{timestamp}"
+            os.makedirs(backup_dir, exist_ok=True)
+
+            for name, target in [
+                ("config.ini", "/etc/aniworld/config.ini"),
+                ("auth.json", "/etc/aniworld/auth.json"),
+                ("aniworld.db", "/opt/aniworld/data/aniworld.db"),
+                ("metadata.db", "/opt/aniworld/data/metadata.db"),
+            ]:
+                if name in names:
+                    # Backup existing
+                    if os.path.exists(target):
+                        shutil.copy2(target, os.path.join(backup_dir, name))
+                    # Extract new
+                    with zf.open(name) as src, open(target, 'wb') as dst:
+                        dst.write(src.read())
+                    restored.append(name)
+
+            return {"status": "ok", "restored": restored, "pre_restore_backup": backup_dir}
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Ungültige ZIP-Datei")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/dashboard/recent-changes")
 async def recent_changes(request: Request, days: int = 7, limit: int = 100):
     """Letzte Änderungen vom API-Server."""
@@ -971,6 +1053,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px;">
     <h3 style="font-size:0.9rem; color:var(--muted); margin-bottom:12px;">PASSWORT</h3>
     <div id="pw-section"></div>
+  </div>
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px;">
+    <h3 style="font-size:0.9rem; color:var(--muted); margin-bottom:12px;">BACKUP / RESTORE</h3>
+    <p style="font-size:0.85rem; color:var(--muted); margin-bottom:12px;">Exportiert DB + Config als ZIP. Zum Wiederherstellen ZIP hochladen.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <button class="btn btn-start" onclick="downloadBackup()">💾 Backup erstellen</button>
+      <label class="btn btn-start" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+        📂 Restore
+        <input type="file" accept=".zip" id="restore-file" style="display:none;" onchange="uploadRestore(this)">
+      </label>
+    </div>
+    <div id="backup-status" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
   </div>
 </div>
 </div><!-- /tab-settings -->
@@ -1669,6 +1763,42 @@ async function cronRunNow(jobId) {
       toast(e.detail, false);
     }
   } catch(e) { toast('Fehler: ' + e, false); }
+}
+
+// === Backup / Restore ===
+function downloadBackup() {
+  document.getElementById('backup-status').textContent = '💾 Backup wird erstellt...';
+  window.location.href = API + '/api/dashboard/backup';
+  setTimeout(() => {
+    document.getElementById('backup-status').textContent = '✅ Backup Download gestartet';
+  }, 1000);
+}
+
+async function uploadRestore(input) {
+  if (!input.files || !input.files[0]) return;
+  const file = input.files[0];
+  if (!file.name.endsWith('.zip')) { toast('Nur ZIP-Dateien erlaubt!', false); return; }
+  if (!confirm('⚠️ Restore überschreibt die aktuelle DB + Config!\\n\\nEin Backup der aktuellen Daten wird automatisch erstellt.\\n\\nFortfahren?')) {
+    input.value = ''; return;
+  }
+  const statusEl = document.getElementById('backup-status');
+  statusEl.textContent = '📂 Restore läuft...';
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const r = await fetch(API + '/api/dashboard/restore', {method:'POST', body: formData});
+    const data = await r.json();
+    if (r.ok) {
+      statusEl.innerHTML = '✅ Restore erfolgreich: ' + data.restored.join(', ') +
+        '<br><span style="color:var(--muted)">Backup der alten Daten: ' + data.pre_restore_backup + '</span>' +
+        '<br><span style="color:var(--yellow)">⚠️ Services neustarten für volle Wirkung!</span>';
+      toast('Restore erfolgreich!');
+    } else {
+      statusEl.textContent = '❌ ' + (data.detail || 'Fehler');
+      toast('Restore fehlgeschlagen!', false);
+    }
+  } catch(e) { statusEl.textContent = '❌ Fehler: ' + e; toast('Restore fehlgeschlagen!', false); }
+  input.value = '';
 }
 
 // === Recent Changes ===

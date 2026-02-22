@@ -751,11 +751,13 @@ show_menu() {
     echo -e "  ${CYAN}4)${NC} Services neustarten       Alle Services restarten"
     echo -e "  ${CYAN}5)${NC} Status                    Service-Status anzeigen"
     echo -e "  ${CYAN}6)${NC} Passwort zurücksetzen     Dashboard Passwort neu setzen"
-    echo -e "  ${CYAN}7)${NC} Deinstallieren            Alles entfernen"
-    echo -e "  ${CYAN}8)${NC} Anleitung                 Wie funktioniert das alles?"
+    echo -e "  ${CYAN}7)${NC} Backup erstellen          DB + Config als ZIP exportieren"
+    echo -e "  ${CYAN}8)${NC} Restore                   Backup-ZIP wiederherstellen"
+    echo -e "  ${CYAN}9)${NC} Deinstallieren            Alles entfernen"
+    echo -e "  ${CYAN}10)${NC} Anleitung                Wie funktioniert das alles?"
     echo -e "  ${CYAN}0)${NC} Beenden"
     echo ""
-    read -p "Auswahl [1-8/0]: " choice
+    read -p "Auswahl [1-10/0]: " choice
 }
 
 uninstall() {
@@ -867,6 +869,117 @@ show_guide() {
     read -p "Drücke Enter um zurück zum Menü zu kommen..."
 }
 
+# ── Backup / Restore ──────────────────────────────────────────────
+
+create_backup() {
+    echo -e "${BOLD}💾 Backup erstellen${NC}"
+    echo ""
+
+    local timestamp
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    local backup_file="aniworld-backup-${timestamp}.zip"
+    local backup_path="/tmp/${backup_file}"
+
+    # Prüfe ob zip installiert ist
+    if ! command -v zip &>/dev/null; then
+        echo -e "${YELLOW}Installiere zip...${NC}"
+        apt-get install -y -qq zip > /dev/null 2>&1
+    fi
+
+    echo -e "  Sammle Dateien..."
+    local files_to_backup=""
+
+    [ -f "$CONFIG_DIR/config.ini" ] && files_to_backup="$files_to_backup $CONFIG_DIR/config.ini"
+    [ -f "$CONFIG_DIR/auth.json" ] && files_to_backup="$files_to_backup $CONFIG_DIR/auth.json"
+    [ -f "$DATA_DIR/aniworld.db" ] && files_to_backup="$files_to_backup $DATA_DIR/aniworld.db"
+    [ -f "$DATA_DIR/metadata.db" ] && files_to_backup="$files_to_backup $DATA_DIR/metadata.db"
+
+    if [ -z "$files_to_backup" ]; then
+        echo -e "${RED}Keine Dateien zum Backup gefunden!${NC}"
+        read -p "Enter für Menü..."
+        return
+    fi
+
+    zip -j "$backup_path" $files_to_backup > /dev/null 2>&1
+
+    if [ -f "$backup_path" ]; then
+        local size
+        size=$(du -h "$backup_path" | cut -f1)
+        echo ""
+        echo -e "${GREEN}✅ Backup erstellt: ${BOLD}$backup_path${NC} (${size})"
+        echo ""
+        echo "  Enthält:"
+        for f in $files_to_backup; do
+            echo -e "    ${GREEN}✅${NC} $(basename $f)"
+        done
+        echo ""
+        echo "  Zum Kopieren: scp root@$(hostname):$backup_path ."
+    else
+        echo -e "${RED}Backup fehlgeschlagen!${NC}"
+    fi
+    echo ""
+    read -p "Enter für Menü..."
+}
+
+restore_backup() {
+    echo -e "${BOLD}📂 Backup wiederherstellen${NC}"
+    echo ""
+    echo -e "  ${YELLOW}⚠️  Dies überschreibt die aktuelle DB + Config!${NC}"
+    echo ""
+    read -p "Pfad zur Backup-ZIP: " backup_zip
+
+    if [ -z "$backup_zip" ] || [ ! -f "$backup_zip" ]; then
+        echo -e "${RED}Datei nicht gefunden: $backup_zip${NC}"
+        read -p "Enter für Menü..."
+        return
+    fi
+
+    # Prüfe ob unzip installiert ist
+    if ! command -v unzip &>/dev/null; then
+        echo -e "${YELLOW}Installiere unzip...${NC}"
+        apt-get install -y -qq unzip > /dev/null 2>&1
+    fi
+
+    # Pre-Restore Backup
+    local timestamp
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    local pre_restore_dir="$DATA_DIR/pre-restore-${timestamp}"
+    mkdir -p "$pre_restore_dir"
+
+    echo -e "  Sichere aktuelle Daten nach ${pre_restore_dir}..."
+    [ -f "$CONFIG_DIR/config.ini" ] && cp "$CONFIG_DIR/config.ini" "$pre_restore_dir/"
+    [ -f "$CONFIG_DIR/auth.json" ] && cp "$CONFIG_DIR/auth.json" "$pre_restore_dir/"
+    [ -f "$DATA_DIR/aniworld.db" ] && cp "$DATA_DIR/aniworld.db" "$pre_restore_dir/"
+    [ -f "$DATA_DIR/metadata.db" ] && cp "$DATA_DIR/metadata.db" "$pre_restore_dir/"
+
+    echo -e "  Stelle Backup wieder her..."
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    unzip -o "$backup_zip" -d "$tmp_dir" > /dev/null 2>&1
+
+    local restored=""
+    [ -f "$tmp_dir/config.ini" ] && cp "$tmp_dir/config.ini" "$CONFIG_DIR/config.ini" && restored="$restored config.ini"
+    [ -f "$tmp_dir/auth.json" ] && cp "$tmp_dir/auth.json" "$CONFIG_DIR/auth.json" && restored="$restored auth.json"
+    [ -f "$tmp_dir/aniworld.db" ] && cp "$tmp_dir/aniworld.db" "$DATA_DIR/aniworld.db" && restored="$restored aniworld.db"
+    [ -f "$tmp_dir/metadata.db" ] && cp "$tmp_dir/metadata.db" "$DATA_DIR/metadata.db" && restored="$restored metadata.db"
+
+    rm -rf "$tmp_dir"
+    set_permissions
+
+    echo ""
+    echo -e "${GREEN}✅ Restore erfolgreich!${NC}"
+    echo "  Wiederhergestellt:${BOLD}$restored${NC}"
+    echo "  Pre-Restore Backup: $pre_restore_dir"
+    echo ""
+
+    read -p "Services neustarten? (j/n): " do_restart
+    if [ "$do_restart" = "j" ] || [ "$do_restart" = "J" ]; then
+        restart_services
+    fi
+    echo ""
+    read -p "Enter für Menü..."
+}
+
 # ── Self-Update ────────────────────────────────────────────────────
 
 self_update() {
@@ -944,8 +1057,10 @@ while true; do
         4) restart_services ;;
         5) status_check; read -p "Enter für Menü..." ;;
         6) reset_dashboard_password ;;
-        7) uninstall ;;
-        8) show_guide ;;
+        7) create_backup ;;
+        8) restore_backup ;;
+        9) uninstall ;;
+        10) show_guide ;;
         0) echo "Bye! 👋"; exit 0 ;;
         *) echo -e "${RED}Ungültige Auswahl${NC}"; sleep 1 ;;
     esac
