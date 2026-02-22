@@ -924,9 +924,14 @@ def incremental_sync():
     finally:
         conn.close()
 
-    log.info(f"Incremental: checking {len(to_check)} existing anime for updates")
+    total_to_check = len(to_check)
+    log.info(f"Incremental: checking {total_to_check} existing anime for updates")
+    checked = 0
 
     for row in to_check:
+        checked += 1
+        if checked % 100 == 0:
+            log.info(f"Incremental: progress {checked}/{total_to_check} ({results['updated_anime']} updated so far)")
         slug = row["slug"]
         old_season_count = row["season_count"] or 0
 
@@ -972,7 +977,7 @@ def incremental_sync():
             anime_updated = False
 
             if live_season_count > old_season_count and live_season_nums:
-                # New seasons found → scrape them
+                # New seasons found → scrape only the new ones
                 conn = get_conn()
                 existing_with_eps = {
                     r["season_number"] for r in conn.execute(
@@ -987,18 +992,33 @@ def incremental_sync():
                     count = scrape_season_episodes(slug, sn)
                     if count > 0:
                         anime_updated = True
-            elif db_seasons:
-                # Same season count: check last season for new episodes
+            elif db_seasons and live_season_nums:
+                # Same season count: quick-check last season episode count
+                # Only fetch the season page to COUNT episodes, don't scrape yet
                 last_season = db_seasons[0]  # DESC order → [0] is highest season
                 old_ep_count = last_season["episode_count"] or 0
-                live_ep_count = scrape_season_episodes(slug, last_season["season_number"])
-                if live_ep_count > old_ep_count:
-                    anime_updated = True
+                last_sn = last_season["season_number"]
 
-            # Check for new films
+                try:
+                    season_resp = _rate_limited_get(
+                        f"{BASE_URL}/anime/stream/{slug}/staffel-{last_sn}",
+                        delay=INCREMENTAL_CHECK_DELAY
+                    )
+                    season_resp.raise_for_status()
+                    season_soup = BeautifulSoup(season_resp.text, "html.parser")
+                    live_ep_count = len(season_soup.select("table.seasonEpisodesList tr[data-episode-id]"))
+
+                    if live_ep_count > old_ep_count:
+                        # New episodes found → now actually scrape them
+                        log.info(f"Incremental: {slug} S{last_sn} has new episodes ({old_ep_count} → {live_ep_count})")
+                        scrape_season_episodes(slug, last_sn)
+                        anime_updated = True
+                except Exception as e:
+                    log.warning(f"Incremental: quick-check failed for {slug} S{last_sn}: {e}")
+
+            # Check for new films (quick-count from film page)
             has_movies_link = soup.select_one('a[href*="/filme"]')
             if has_movies_link:
-                old_has_movies = row["has_movies"] if row["has_movies"] else 0
                 conn = get_conn()
                 try:
                     conn.execute("UPDATE anime SET has_movies=1 WHERE slug=?", (slug,))
@@ -1009,9 +1029,23 @@ def incremental_sync():
                     ).fetchone()["cnt"]
                 finally:
                     conn.close()
-                new_film_count = scrape_film_episodes(slug)
-                if new_film_count and new_film_count > old_film_count:
-                    anime_updated = True
+
+                # Quick-count films without full scrape
+                try:
+                    film_resp = _rate_limited_get(
+                        f"{BASE_URL}/anime/stream/{slug}/filme",
+                        delay=INCREMENTAL_CHECK_DELAY
+                    )
+                    film_resp.raise_for_status()
+                    film_soup = BeautifulSoup(film_resp.text, "html.parser")
+                    live_film_count = len(film_soup.select("tr[data-episode-id]"))
+
+                    if live_film_count > old_film_count:
+                        log.info(f"Incremental: {slug} has new films ({old_film_count} → {live_film_count})")
+                        scrape_film_episodes(slug)
+                        anime_updated = True
+                except Exception as e:
+                    log.warning(f"Incremental: film quick-check failed for {slug}: {e}")
 
             if anime_updated:
                 results["updated_anime"] += 1
