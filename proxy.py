@@ -1039,15 +1039,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <!-- Tab: Zuletzt hinzugefügt -->
 <div id="tab-recent" style="display:none;">
   <h2>🆕 Zuletzt hinzugefügt</h2>
-  <div style="margin-bottom:15px;">
-    <select id="recent-days" onchange="loadRecentChanges()" style="padding:6px 12px; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:6px;">
+  <div style="margin-bottom:15px; display:flex; gap:10px; align-items:center;">
+    <select id="recent-days" onchange="recentPage=1;loadRecentChanges()" style="padding:6px 12px; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:6px;">
       <option value="1">Letzte 24h</option>
       <option value="3">Letzte 3 Tage</option>
       <option value="7" selected>Letzte 7 Tage</option>
       <option value="30">Letzte 30 Tage</option>
     </select>
+    <span id="recent-page-info" style="font-size:0.85rem; color:var(--muted);"></span>
   </div>
   <div id="recent-list" style="font-size:0.9rem;"></div>
+  <div id="recent-pagination" style="margin-top:15px; display:flex; gap:8px; justify-content:center;"></div>
 </div><!-- /tab-recent -->
 
 <!-- Tab: Konfiguration -->
@@ -1861,44 +1863,80 @@ async function uploadRestore(input) {
 }
 
 // === Recent Changes ===
+let recentPage = 1;
+const RECENT_PER_PAGE = 50;
+let recentAllData = [];
+
 async function loadRecentChanges() {
   const days = document.getElementById('recent-days').value;
   const el = document.getElementById('recent-list');
   el.innerHTML = '<span style="color:var(--muted)">Lade...</span>';
   try {
-    const r = await fetch(API + '/api/dashboard/recent-changes?days=' + days + '&limit=200');
-    const data = await r.json();
-    if (!data || data.length === 0) {
+    const r = await fetch(API + '/api/dashboard/recent-changes?days=' + days + '&limit=5000');
+    recentAllData = await r.json();
+    if (!recentAllData || recentAllData.length === 0) {
       el.innerHTML = '<div style="color:var(--muted); padding:20px; text-align:center;">Keine Änderungen im gewählten Zeitraum.</div>';
+      document.getElementById('recent-pagination').innerHTML = '';
+      document.getElementById('recent-page-info').textContent = '';
       return;
     }
-    // Group by date
-    const byDate = {};
-    data.forEach(c => {
-      const d = c.createdAt ? c.createdAt.split('T')[0] : 'Unbekannt';
-      if (!byDate[d]) byDate[d] = [];
-      byDate[d].push(c);
-    });
-    const icons = {new_anime:'🆕', new_season:'📺', new_episodes:'🎬', new_films:'🎥'};
-    const labels = {new_anime:'Neuer Anime', new_season:'Neue Staffel', new_episodes:'Neue Episoden', new_films:'Neue Filme'};
-    let html = '';
-    for (const [date, changes] of Object.entries(byDate)) {
-      html += '<div style="margin-bottom:20px;">';
-      html += '<h3 style="color:var(--accent); margin:0 0 8px 0; font-size:0.95rem;">' + date + '</h3>';
-      changes.forEach(c => {
-        const icon = icons[c.changeType] || '📌';
-        const label = labels[c.changeType] || c.changeType;
-        html += '<div style="padding:6px 12px; margin:4px 0; background:var(--card); border-radius:6px; border-left:3px solid var(--accent);">';
-        html += icon + ' <strong>' + (c.title || c.slug) + '</strong>';
-        html += ' <span style="color:var(--muted); margin-left:8px;">' + (c.detail || label) + '</span>';
-        html += '</div>';
-      });
-      html += '</div>';
-    }
-    el.innerHTML = html;
+    renderRecentPage();
   } catch(e) {
     el.innerHTML = '<span style="color:var(--red)">Fehler: ' + e + '</span>';
   }
+}
+
+function renderRecentPage() {
+  const el = document.getElementById('recent-list');
+  const total = recentAllData.length;
+  const totalPages = Math.ceil(total / RECENT_PER_PAGE);
+  const start = (recentPage - 1) * RECENT_PER_PAGE;
+  const pageData = recentAllData.slice(start, start + RECENT_PER_PAGE);
+
+  document.getElementById('recent-page-info').textContent = total + ' Einträge';
+
+  // Group by date
+  const byDate = {};
+  pageData.forEach(c => {
+    const d = c.createdAt ? c.createdAt.split('T')[0] : 'Unbekannt';
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(c);
+  });
+  const icons = {new_anime:'🆕', new_season:'📺', new_episodes:'🎬', new_films:'🎥'};
+  let html = '';
+  for (const [date, changes] of Object.entries(byDate)) {
+    html += '<div style="margin-bottom:20px;">';
+    html += '<h3 style="color:var(--accent); margin:0 0 8px 0; font-size:0.95rem;">' + date + '</h3>';
+    changes.forEach(c => {
+      const icon = icons[c.changeType] || '📌';
+      html += '<div style="padding:6px 12px; margin:4px 0; background:var(--card); border-radius:6px; border-left:3px solid var(--accent);">';
+      html += icon + ' <strong>' + (c.title || c.slug) + '</strong>';
+      html += ' <span style="color:var(--muted); margin-left:8px;">' + (c.detail || c.changeType) + '</span>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+  el.innerHTML = html;
+
+  // Pagination
+  let pag = '';
+  if (totalPages > 1) {
+    const btnStyle = 'padding:6px 12px; border:1px solid var(--border); border-radius:6px; cursor:pointer; background:var(--card); color:var(--text);';
+    const activeStyle = 'padding:6px 12px; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:#000; font-weight:bold;';
+    if (recentPage > 1) pag += '<button style="' + btnStyle + '" onclick="recentPage=1;renderRecentPage()">«</button>';
+    if (recentPage > 1) pag += '<button style="' + btnStyle + '" onclick="recentPage--;renderRecentPage()">‹</button>';
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === recentPage) pag += '<button style="' + activeStyle + '">' + i + '</button>';
+      else if (Math.abs(i - recentPage) <= 2 || i === 1 || i === totalPages) {
+        pag += '<button style="' + btnStyle + '" onclick="recentPage=' + i + ';renderRecentPage()">' + i + '</button>';
+      } else if (Math.abs(i - recentPage) === 3) {
+        pag += '<span style="color:var(--muted)">...</span>';
+      }
+    }
+    if (recentPage < totalPages) pag += '<button style="' + btnStyle + '" onclick="recentPage++;renderRecentPage()">›</button>';
+    if (recentPage < totalPages) pag += '<button style="' + btnStyle + '" onclick="recentPage=' + totalPages + ';renderRecentPage()">»</button>';
+  }
+  document.getElementById('recent-pagination').innerHTML = pag;
 }
 
 // Init
