@@ -102,7 +102,7 @@ Nach der Installation erreichbar unter: **http://localhost:5081/**
 1. **Installer starten** - Passwort wird bei Installation festgelegt
 2. **Dashboard öffnen:** http://localhost:5081/ (Login mit Passwort)
 3. **Katalog wird automatisch gescraped** beim API-Start
-4. **Detail Scrape starten** im Dashboard (holt Cover, Beschreibungen) - dauert ca. 2h
+4. **Detail Scrape starten** im Dashboard via "Batch Scrape" (holt Cover, Beschreibungen) - dauert ca. 2h, nur bei Erstinstallation nötig
 5. **Sync starten** im Dashboard - generiert .strm/.nfo Dateien
 6. **Emby Library:** Wird optional bei Installation automatisch angelegt, oder manuell (Typ: TV-Sendungen, Pfad: `/media/aniworld`)
 

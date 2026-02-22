@@ -34,8 +34,9 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 ### 1. API-Server (Python/Flask, Port 5080)
 - Scrapt aniworld.to, cached Anime-Katalog + Episoden in SQLite
 - Stream-URL Resolution (Hoster auflösen)
-- Background: Auto-Sync Katalog + Detail-Batches beim Start
-- Nightly Episode-Scrape (02:00 UTC)
+- Background: Auto-Sync Katalog beim Start (nur Anime-Liste, kein Detail-Scrape)
+- Nightly Incremental Sync (02:00 UTC): checkt alle Anime auf neue Episoden/Staffeln/Filme
+- Detail-Batch-Scrape nur bei Erstinstallation + manuell via Dashboard
 - systemd Service: `aniworld-api`
 
 ### 2. Metadata-Server (Python/Flask, Port 5090)
@@ -87,6 +88,8 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 
 ### ✅ Fertig
 - [x] API-Server (Katalog-Scraping, Detail-Scraping, Stream-Resolution)
+- [x] Incremental Sync: checkt ALLE Anime auf neue Episoden/Staffeln/Filme (kein 23h-Filter)
+- [x] Background-Loop: nur Katalog-Sync, kein auto Detail-Batch (nur bei Erstinstall + manuell)
 - [x] Metadata-Server (AniList/MAL/AniDB, Cover-Cache, Sync-Progress Tracking)
 - [x] Proxy-Server (Stream-Redirect, 302 zu Hoster-CDN)
 - [x] Dashboard: Service-Status (online/offline)
