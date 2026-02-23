@@ -361,6 +361,7 @@ def scrape_film_episodes(slug):
         return 0
 
 HOSTER_CACHE_TTL_DAYS = 7   # redirect_url: stable, changes rarely
+HOSTER_FAIL_TTL_MINUTES = int(_cfg.get("api", "fail_ttl_minutes", fallback="30"))  # wie lange ein fehlgeschlagener Hoster übersprungen wird
 STREAM_URL_CACHE_TTL_H = 2  # stream_url (CDN): expires ~2h
 
 def _get_hoster_cache(slug, season, episode):
@@ -541,7 +542,7 @@ def resolve_stream_urls(slug, season, episode):
             # Skip recently failed
             if h.get("failedAt"):
                 try:
-                    if datetime.utcnow() - datetime.fromisoformat(h["failedAt"]) < timedelta(hours=6):
+                    if datetime.utcnow() - datetime.fromisoformat(h["failedAt"]) < timedelta(minutes=HOSTER_FAIL_TTL_MINUTES):
                         continue
                 except Exception:
                     pass
@@ -1312,7 +1313,7 @@ def nightly_episode_scrape():
                                     # Skip recently failed (within 6h)
                                     if h.get("failedAt"):
                                         try:
-                                            if datetime.utcnow() - datetime.fromisoformat(h["failedAt"]) < timedelta(hours=6):
+                                            if datetime.utcnow() - datetime.fromisoformat(h["failedAt"]) < timedelta(minutes=HOSTER_FAIL_TTL_MINUTES):
                                                 continue
                                         except Exception:
                                             pass
@@ -1781,12 +1782,12 @@ def get_hoster_health():
     """Get hoster health stats (success rate, total, failed, last seen)."""
     conn = get_conn()
     try:
-        rows = conn.execute("""
+        rows = conn.execute(f"""
             SELECT
                 hoster,
                 COUNT(*) as total,
                 COUNT(CASE WHEN stream_url IS NOT NULL AND stream_url != '' THEN 1 END) as resolved,
-                COUNT(CASE WHEN failed_at IS NOT NULL AND failed_at > datetime('now', '-6 hours') THEN 1 END) as recent_failures,
+                COUNT(CASE WHEN failed_at IS NOT NULL AND failed_at > datetime('now', '-{HOSTER_FAIL_TTL_MINUTES} minutes') THEN 1 END) as recent_failures,
                 MAX(stream_cached_at) as last_success,
                 MAX(failed_at) as last_failure
             FROM stream_cache
@@ -1805,6 +1806,23 @@ def get_hoster_health():
         "lastSuccess": r["last_success"],
         "lastFailure": r["last_failure"],
     } for r in rows])
+
+
+@app.route("/api/cache/clear-failed", methods=["POST"])
+def clear_failed_cache():
+    """Reset failed_at Marks - alle oder für einen bestimmten Slug."""
+    slug = request.json.get("slug") if request.is_json else None
+    conn = get_conn()
+    try:
+        if slug:
+            r = conn.execute("UPDATE stream_cache SET failed_at=NULL WHERE slug=? AND failed_at IS NOT NULL", (slug,)).rowcount
+        else:
+            r = conn.execute("UPDATE stream_cache SET failed_at=NULL WHERE failed_at IS NOT NULL").rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    log.info(f"Cleared {r} failed marks" + (f" for {slug}" if slug else ""))
+    return jsonify({"cleared": r, "slug": slug})
 
 
 @app.route("/api/changes")

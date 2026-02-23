@@ -2,6 +2,8 @@
 # AniWorld API Server (Scraping + Stream-Resolution)
 port = 5080
 db_path = /opt/aniworld/data/aniworld.db
+# Wie lange ein fehlgeschlagener Hoster übersprungen wird (in Minuten, default: 30)
+fail_ttl_minutes = 30
 
 [metadata]
 # AniWorld Metadata Server (AniList/MAL/AniDB)
