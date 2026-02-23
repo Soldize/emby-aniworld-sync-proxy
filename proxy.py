@@ -1058,7 +1058,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <button class="btn btn-start" id="btn-sync-start" onclick="syncStart()">▶ Starten</button>
     <button class="btn btn-stop" id="btn-sync-stop" onclick="syncStop()" disabled>⬛ Stoppen</button>
   </div>
-  <div class="log-box" id="sync-log"></div>
 </div>
 
 <!-- Detail Scrape -->
@@ -1373,7 +1372,7 @@ function renderStatus(data) {
 async function syncStart() {
   try {
     logOffset = 0;
-    document.getElementById('sync-log').innerHTML = '';
+    logOffset = 0;
     const r = await fetch(API + '/api/dashboard/sync/start', {method:'POST'});
     if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
     toast('Sync gestartet');
@@ -1395,17 +1394,7 @@ async function fetchLog() {
   try {
     const r = await fetch(API + '/api/dashboard/sync/log?offset=' + logOffset);
     const data = await r.json();
-    const box = document.getElementById('sync-log');
-    for (const line of data.lines) {
-      const span = document.createElement('div');
-      if (line.includes('[ERROR]')) span.className = 'error';
-      else if (line.includes('[WARNING]')) span.className = 'warn';
-      else if (line.includes('[INFO]')) span.className = 'info';
-      span.textContent = line;
-      box.appendChild(span);
-    }
     logOffset = data.total;
-    box.scrollTop = box.scrollHeight;
   } catch(e) {}
 }
 
