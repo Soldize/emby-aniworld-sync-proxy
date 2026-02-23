@@ -19,6 +19,8 @@ port = 5081
 [sync]
 # Pfad für .strm/.nfo Dateien (Emby Library zeigt hierhin)
 media_path = /media/aniworld
+# Parallele Worker (default: 2, höher = schneller aber mehr RAM/CPU + aniworld.to Throttling)
+workers = 2
 
 [anidb]
 # AniDB Client (registrieren unter https://anidb.net/software/add)

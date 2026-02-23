@@ -350,7 +350,7 @@ def _write_episode(show_dir, safe_name, anime_name, slug, season, ep_num, ep_tit
     return 1
 
 
-WORKERS = 10
+WORKERS = config.getint("sync", "workers", fallback=2)
 
 
 def _sync_one(args):
