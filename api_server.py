@@ -1585,16 +1585,17 @@ def get_season_episodes(slug, season_num):
         "lastScraped": r["last_scraped"]
     } for r in rows]
 
-    # Pre-resolve all episodes without fresh stream cache in background
-    ep_numbers = [r["episode_number"] for r in rows]
-    def prefetch_streams(s, sn, eps):
-        for ep_num in eps:
-            try:
-                if _get_hoster_cache(s, sn, ep_num) is None:
-                    _scrape_hoster_list(s, sn, ep_num)
-            except Exception as e:
-                log.warning(f"Prefetch stream failed {s} S{sn}E{ep_num}: {e}")
-    threading.Thread(target=prefetch_streams, args=(slug, season_num, ep_numbers), daemon=True).start()
+    # Pre-resolve only when explicitly requested (not during sync - kills RAM with Playwright)
+    if request.args.get("prefetch") == "1":
+        ep_numbers = [r["episode_number"] for r in rows]
+        def prefetch_streams(s, sn, eps):
+            for ep_num in eps:
+                try:
+                    if _get_hoster_cache(s, sn, ep_num) is None:
+                        _scrape_hoster_list(s, sn, ep_num)
+                except Exception as e:
+                    log.warning(f"Prefetch stream failed {s} S{sn}E{ep_num}: {e}")
+        threading.Thread(target=prefetch_streams, args=(slug, season_num, ep_numbers), daemon=True).start()
 
     return jsonify(episodes)
 
@@ -1656,16 +1657,17 @@ def get_film_episodes(slug):
         "lastScraped": r["last_scraped"]
     } for r in rows]
 
-    # Pre-resolve all film episodes without fresh stream cache in background
-    film_ep_numbers = [r["episode_number"] for r in rows]
-    def prefetch_film_streams(s, eps):
-        for ep_num in eps:
-            try:
-                if _get_hoster_cache(s, 0, ep_num) is None:
-                    _scrape_hoster_list(s, 0, ep_num)
-            except Exception as e:
-                log.warning(f"Prefetch film stream failed {s} E{ep_num}: {e}")
-    threading.Thread(target=prefetch_film_streams, args=(slug, film_ep_numbers), daemon=True).start()
+    # Pre-resolve only when explicitly requested
+    if request.args.get("prefetch") == "1":
+        film_ep_numbers = [r["episode_number"] for r in rows]
+        def prefetch_film_streams(s, eps):
+            for ep_num in eps:
+                try:
+                    if _get_hoster_cache(s, 0, ep_num) is None:
+                        _scrape_hoster_list(s, 0, ep_num)
+                except Exception as e:
+                    log.warning(f"Prefetch film stream failed {s} E{ep_num}: {e}")
+        threading.Thread(target=prefetch_film_streams, args=(slug, film_ep_numbers), daemon=True).start()
 
     return jsonify(episodes)
 
