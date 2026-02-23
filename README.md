@@ -22,6 +22,7 @@ Anime-Streaming von aniworld.to in Emby - als native TV-Show Library.
 - Python 3.10+
 - Ubuntu 24.04 LTS / Debian 12+
 - Chromium (wird automatisch via Playwright installiert)
+- X11-Libs für Headless Chromium (`libxfixes3`, `libxcomposite1`, `libcairo2`, etc. - werden bei Installation geprüft)
 
 ## Installation
 

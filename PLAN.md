@@ -164,3 +164,11 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 
 #### Sonstiges
 - [x] GitHub Release erstellen (v1.0.0)
+
+### 🐛 Bugfixes
+
+#### 2026-02-23: extract_video_url + Playwright/Chromium
+- [x] `extract_video_url()` Funktionsdefinition fehlte (`def` Statement nicht vorhanden)
+- [x] X11-Libs für Headless Chromium fehlten auf Emby-Server (libXfixes, libcairo2, etc.)
+- [x] Playwright/Chromium war nur für root installiert, nicht für User `emby` (Service läuft als emby)
+- [x] stream_cache failed_at Marks gecleert die sich durch den Bug angesammelt hatten

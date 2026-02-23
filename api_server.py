@@ -689,6 +689,7 @@ def _extract_voe_playwright(url):
         return None
 
 
+def extract_video_url(hoster_url, html):
     """Extract video URL from hoster page HTML. Returns URL string or None."""
     try:
         # voe.sx (and its rotating domains)
