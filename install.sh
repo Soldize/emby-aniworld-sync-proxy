@@ -731,9 +731,10 @@ check_for_updates() {
 
     echo -e "${GREEN}✅ Dateien aktualisiert${NC}"
 
-    # Berechtigungen + venv + Restart
+    # Berechtigungen + venv + Playwright + Restart
     set_permissions
     install_venv
+    install_playwright
 
     echo ""
     echo -e "${YELLOW}Starte Services neu...${NC}"
