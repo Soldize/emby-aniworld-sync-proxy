@@ -823,6 +823,26 @@ async def catalog_films(slug: str, request: Request):
 # Cron API
 # ========================
 
+@app.post("/api/dashboard/restart/{service}")
+async def restart_service(service: str):
+    """Restart a systemd service."""
+    allowed = {"api": "aniworld-api", "metadata": "aniworld-metadata", "proxy": "aniworld-proxy"}
+    unit = allowed.get(service)
+    if not unit:
+        raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
+    try:
+        result = subprocess.run(
+            ["systemctl", "restart", unit],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            return {"status": "ok", "service": unit}
+        else:
+            raise HTTPException(status_code=500, detail=result.stderr.strip())
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Restart timeout")
+
+
 @app.get("/api/dashboard/crons")
 async def crons_get():
     """Get all cron jobs with last run info."""
@@ -887,6 +907,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
   .status-dot.online, .status-dot.running { background: var(--green); }
   .status-dot.offline { background: var(--red); }
+  .btn-restart { background: none; border: 1px solid var(--border); color: var(--muted); cursor: pointer;
+    border-radius: 4px; font-size: 1rem; padding: 2px 6px; margin-left: 6px; vertical-align: middle; }
+  .btn-restart:hover { color: var(--accent); border-color: var(--accent); }
   .status-dot.idle, .status-dot.finished { background: var(--yellow); }
   .port { color: var(--muted); font-size: 0.8rem; }
   .section { margin-bottom: 24px; }
@@ -1157,6 +1180,22 @@ function toast(msg, ok=true) {
   setTimeout(() => t.className = 'toast', 3000);
 }
 
+async function restartService(svc) {
+  const names = {api: 'API Server', metadata: 'Metadata Server', proxy: 'Proxy'};
+  if (!confirm((names[svc] || svc) + ' wirklich neustarten?')) return;
+  try {
+    const r = await fetch('/api/dashboard/restart/' + svc, {method: 'POST'});
+    if (r.ok) {
+      toast((names[svc] || svc) + ' wird neugestartet...');
+      if (svc === 'proxy') { setTimeout(() => location.reload(), 3000); }
+      else { setTimeout(fetchStatus, 2000); }
+    } else {
+      const d = await r.json().catch(() => ({}));
+      toast('Restart fehlgeschlagen: ' + (d.detail || r.status), false);
+    }
+  } catch(e) { toast('Restart fehlgeschlagen: ' + e, false); }
+}
+
 async function fetchStatus() {
   try {
     const r = await fetch(API + '/api/dashboard/status');
@@ -1169,10 +1208,14 @@ function renderStatus(data) {
   const grid = document.getElementById('status-grid');
   const names = {api: 'API Server', metadata: 'Metadata Server', proxy: 'Proxy', sync: 'STRM-Sync'};
   let html = '';
+  const restartable = ['api', 'metadata', 'proxy'];
   for (const [key, info] of Object.entries(data)) {
     const st = info.status || 'offline';
+    const restartBtn = restartable.includes(key)
+      ? `<button class="btn-restart" onclick="restartService('${key}')" title="Service neustarten">&#x21bb;</button>`
+      : '';
     html += `<div class="card">
-      <h3>${names[key] || key}</h3>
+      <h3>${names[key] || key} ${restartBtn}</h3>
       <span class="status-dot ${st}"></span>${st}
       ${info.port ? `<span class="port">:${info.port}</span>` : ''}
     </div>`;
