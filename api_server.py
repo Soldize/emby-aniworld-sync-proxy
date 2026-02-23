@@ -1374,10 +1374,12 @@ def nightly_episode_scrape():
                 log.warning(f"CDN refresh failed for {row['slug']} S{row['season']}E{row['episode']}: {e}")
 
     schedule.every().day.at("02:00").do(scrape_job)
-    schedule.every(30).minutes.do(stream_refresh_job)
+    # Stream refresh disabled - CDN URLs are resolved on-demand when playing.
+    # On small servers (2GB RAM), background Playwright sessions cause OOM.
+    # schedule.every(30).minutes.do(stream_refresh_job)
 
     log.info("Nightly episode scrape scheduler started (02:00 UTC)")
-    log.info("Stream refresh scheduler started (every 30 min)")
+    log.info("Stream refresh disabled (on-demand resolve only)")
 
     while True:
         schedule.run_pending()
