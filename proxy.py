@@ -793,7 +793,7 @@ async def catalog_episodes(slug: str, season_num: int, request: Request):
 @app.get("/api/dashboard/logs/{service}")
 async def get_service_logs(service: str, request: Request, lines: int = 100, level: str = ""):
     """Get logs for a service via journalctl."""
-    allowed = {"api": "aniworld-api", "metadata": "aniworld-metadata", "proxy": "aniworld-proxy"}
+    allowed = {"api": "aniworld-api", "metadata": "aniworld-metadata", "proxy": "aniworld-proxy", "sync": "aniworld-sync"}
     unit = allowed.get(service)
     if not unit:
         raise HTTPException(status_code=400, detail=f"Unbekannter Service: {service}")
@@ -826,7 +826,7 @@ async def catalog_films(slug: str, request: Request):
 @app.post("/api/dashboard/restart/{service}")
 async def restart_service(service: str):
     """Restart a systemd service."""
-    allowed = {"api": "aniworld-api", "metadata": "aniworld-metadata", "proxy": "aniworld-proxy"}
+    allowed = {"api": "aniworld-api", "metadata": "aniworld-metadata", "proxy": "aniworld-proxy", "sync": "aniworld-sync"}
     unit = allowed.get(service)
     if not unit:
         raise HTTPException(status_code=400, detail=f"Unknown service: {service}")
@@ -1149,6 +1149,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <button class="letter-btn active" onclick="loadLogs('api', this)">API Server</button>
       <button class="letter-btn" onclick="loadLogs('metadata', this)">Metadata Server</button>
       <button class="letter-btn" onclick="loadLogs('proxy', this)">Proxy</button>
+      <button class="letter-btn" onclick="loadLogs('sync', this)">STRM-Sync</button>
       <span style="color:var(--muted); margin-left:8px;">Filter:</span>
       <select id="log-level" onchange="reloadLogs()" style="padding:4px 8px; border:1px solid var(--border);
         border-radius:4px; background:var(--surface); color:var(--text); font-size:0.85rem;">
