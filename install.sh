@@ -127,10 +127,33 @@ download_files() {
 }
 
 install_venv() {
-    echo -e "${YELLOW}Erstelle Python venv + installiere Pakete...${NC}"
+    echo -e "${YELLOW}Python Pakete prüfen...${NC}"
     python3 -m venv "$INSTALL_DIR/venv"
-    "$INSTALL_DIR/venv/bin/pip" install -q -r "$INSTALL_DIR/requirements.txt"
-    echo -e "${GREEN}✅ Python Pakete installiert${NC}"
+
+    # Pakete einzeln prüfen und Status anzeigen
+    while IFS= read -r line; do
+        # Kommentare und leere Zeilen überspringen
+        line=$(echo "$line" | sed 's/#.*//' | xargs)
+        [ -z "$line" ] && continue
+        # Paketname extrahieren (vor >=, ==, etc.)
+        pkg_name=$(echo "$line" | sed 's/[><=!].*//' | xargs)
+        # Prüfen ob schon installiert
+        local installed_ver=""
+        installed_ver=$("$INSTALL_DIR/venv/bin/pip" show "$pkg_name" 2>/dev/null | grep -oP '(?<=^Version: ).+' || true)
+        if [ -n "$installed_ver" ]; then
+            echo -e "  ${GREEN}✅${NC} $pkg_name ($installed_ver)"
+        else
+            echo -ne "  ${YELLOW}⬇️  $pkg_name${NC} ... "
+            "$INSTALL_DIR/venv/bin/pip" install -q "$line" 2>/dev/null
+            installed_ver=$("$INSTALL_DIR/venv/bin/pip" show "$pkg_name" 2>/dev/null | grep -oP '(?<=^Version: ).+' || true)
+            echo -e "${GREEN}$installed_ver${NC}"
+        fi
+    done < "$INSTALL_DIR/requirements.txt"
+
+    # Upgrade aller Pakete auf neueste kompatible Version (leise)
+    "$INSTALL_DIR/venv/bin/pip" install -q --upgrade -r "$INSTALL_DIR/requirements.txt" 2>/dev/null || true
+
+    echo -e "${GREEN}✅ Python Pakete aktuell${NC}"
     install_playwright
 }
 
@@ -735,10 +758,9 @@ check_for_updates() {
 
     echo -e "${GREEN}✅ Dateien aktualisiert${NC}"
 
-    # Berechtigungen + venv + Playwright + Restart
+    # Berechtigungen + venv (inkl. Playwright) + Restart
     set_permissions
     install_venv
-    install_playwright
 
     echo ""
     echo -e "${YELLOW}Starte Services neu...${NC}"
