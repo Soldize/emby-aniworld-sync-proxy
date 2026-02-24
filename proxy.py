@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 AniWorld Proxy Server + Dashboard
-- /play/{slug}/{season}/{episode} - Stream-Redirect für Emby (.strm)
+- /play/{slug}/{season}/{episode} - HLS Stream Proxy für Emby (.strm)
+- /stream/{session_id}/* - HLS Playlist + Segment Proxy mit Retry
 - / - Web Dashboard (Status, Sync, Config)
 - /api/dashboard/* - Dashboard API
 """
@@ -19,11 +20,14 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urljoin, urlparse, quote
 
+import httpx
 import requests
 from fastapi import FastAPI, HTTPException, Request, Cookie
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 import uvicorn
 
 # Config
@@ -41,6 +45,80 @@ PREF_HOSTER = config.get("preferences", "hoster", fallback="VOE")
 
 API_BASE = f"http://localhost:{API_PORT}"
 META_BASE = f"http://localhost:{META_PORT}"
+
+# HLS Proxy Settings
+STREAM_SESSION_TTL = 14400  # 4 hours - stream sessions expire after this
+SEGMENT_RETRY_COUNT = 3     # retry failed segment fetches
+SEGMENT_RETRY_DELAY = 0.5   # seconds between retries
+SEGMENT_TIMEOUT = 30        # seconds per segment fetch
+HTTPX_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
+# Stream session storage: session_id -> {base_url, stream_url, created, slug, season, episode}
+_stream_sessions = {}
+_stream_sessions_lock = threading.Lock()
+
+
+def _create_stream_session(base_url, stream_url, slug, season, episode):
+    """Create a new stream session for HLS proxying."""
+    session_id = uuid.uuid4().hex[:16]
+    with _stream_sessions_lock:
+        _stream_sessions[session_id] = {
+            "base_url": base_url,
+            "stream_url": stream_url,
+            "slug": slug,
+            "season": season,
+            "episode": episode,
+            "created": time.time(),
+        }
+        # Cleanup expired sessions
+        now = time.time()
+        expired = [k for k, v in _stream_sessions.items() if now - v["created"] > STREAM_SESSION_TTL]
+        for k in expired:
+            del _stream_sessions[k]
+    return session_id
+
+
+def _get_stream_session(session_id):
+    """Get stream session data, None if expired/missing."""
+    with _stream_sessions_lock:
+        session = _stream_sessions.get(session_id)
+        if not session:
+            return None
+        if time.time() - session["created"] > STREAM_SESSION_TTL:
+            del _stream_sessions[session_id]
+            return None
+        return session
+
+
+def _rewrite_m3u8(content, base_url, session_id, proxy_base):
+    """Rewrite m3u8 playlist URLs to point through our proxy."""
+    lines = content.split('\n')
+    result = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            # Handle URI= in EXT-X-I-FRAME-STREAM-INF
+            if 'URI="' in stripped:
+                def rewrite_uri(match):
+                    uri = match.group(1)
+                    if uri.startswith('http'):
+                        encoded = quote(uri, safe='')
+                    else:
+                        full_url = urljoin(base_url, uri)
+                        encoded = quote(full_url, safe='')
+                    return f'URI="{proxy_base}/stream/{session_id}/proxy?url={encoded}"'
+                stripped = re.sub(r'URI="([^"]+)"', rewrite_uri, stripped)
+            result.append(stripped)
+        else:
+            # This is a URL line (playlist or segment)
+            if stripped.startswith('http'):
+                full_url = stripped
+            else:
+                full_url = urljoin(base_url, stripped)
+            encoded = quote(full_url, safe='')
+            result.append(f'{proxy_base}/stream/{session_id}/proxy?url={encoded}')
+    return '\n'.join(result)
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -250,7 +328,7 @@ app = FastAPI(title="AniWorld Proxy", docs_url=None, redoc_url=None)
 async def auth_middleware(request: Request, call_next):
     """Protect dashboard routes. /play/*, /health, /login, /api/auth/* are open."""
     path = request.url.path
-    open_paths = ["/play/", "/health", "/login", "/api/auth/"]
+    open_paths = ["/play/", "/stream/", "/health", "/login", "/api/auth/"]
     if any(path.startswith(p) for p in open_paths):
         return await call_next(request)
     if path == "/" or path.startswith("/api/dashboard"):
@@ -290,7 +368,7 @@ def _read_sync_output():
 # ========================
 
 @app.get("/play/{slug}/{season}/{episode}")
-async def play(slug: str, season: int, episode: int):
+async def play(request: Request, slug: str, season: int, episode: int):
     log.info(f"Play request: {slug} S{season}E{episode}")
     try:
         resp = requests.post(
@@ -324,8 +402,114 @@ async def play(slug: str, season: int, episode: int):
     if not stream_url:
         raise HTTPException(status_code=404, detail="Stream URL empty")
 
-    log.info(f"Redirecting to {best.get('name')} ({best.get('language')})")
-    return RedirectResponse(url=stream_url, status_code=302)
+    # Determine base URL for relative m3u8 URLs
+    parsed = urlparse(stream_url)
+    base_path = parsed.path.rsplit('/', 1)[0] + '/'
+    base_url = f"{parsed.scheme}://{parsed.netloc}{base_path}"
+
+    # Create stream session
+    session_id = _create_stream_session(base_url, stream_url, slug, season, episode)
+
+    # Determine proxy base URL (how clients reach us)
+    proxy_base = f"{request.url.scheme}://{request.url.netloc}"
+
+    log.info(f"HLS Proxy: {best.get('name')} ({best.get('language')}) -> session {session_id}")
+
+    # Fetch master m3u8 and rewrite URLs
+    try:
+        async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, follow_redirects=True) as client:
+            r = await client.get(stream_url)
+            r.raise_for_status()
+            rewritten = _rewrite_m3u8(r.text, base_url, session_id, proxy_base)
+            return Response(
+                content=rewritten,
+                media_type="application/vnd.apple.mpegurl",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-cache",
+                }
+            )
+    except httpx.HTTPError as e:
+        log.error(f"Failed to fetch master m3u8: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch stream playlist")
+
+
+@app.get("/stream/{session_id}/proxy")
+async def stream_proxy(request: Request, session_id: str, url: str):
+    """Proxy HLS playlists and segments with retry logic."""
+    session = _get_stream_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Stream session expired or not found")
+
+    # Determine if this is a playlist (.m3u8) or segment (.ts)
+    parsed = urlparse(url)
+    is_playlist = '.m3u8' in parsed.path
+    proxy_base = f"{request.url.scheme}://{request.url.netloc}"
+
+    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, follow_redirects=True) as client:
+        last_error = None
+        for attempt in range(1, SEGMENT_RETRY_COUNT + 1):
+            try:
+                if is_playlist:
+                    # Fetch and rewrite sub-playlist
+                    r = await client.get(url)
+                    r.raise_for_status()
+                    # Base URL for this sub-playlist
+                    sub_base = url.rsplit('/', 1)[0] + '/' if '/' in urlparse(url).path else session["base_url"]
+                    rewritten = _rewrite_m3u8(r.text, sub_base, session_id, proxy_base)
+                    return Response(
+                        content=rewritten,
+                        media_type="application/vnd.apple.mpegurl",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Cache-Control": "no-cache",
+                        }
+                    )
+                else:
+                    # Stream segment through with chunked transfer
+                    r = await client.get(url)
+                    r.raise_for_status()
+
+                    # Determine content type
+                    content_type = r.headers.get("content-type", "video/mp2t")
+
+                    return Response(
+                        content=r.content,
+                        media_type=content_type,
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Cache-Control": "max-age=86400",
+                        }
+                    )
+            except (httpx.HTTPError, httpx.StreamError) as e:
+                last_error = e
+                if attempt < SEGMENT_RETRY_COUNT:
+                    log.warning(f"Stream proxy retry {attempt}/{SEGMENT_RETRY_COUNT} for {url[:80]}...: {e}")
+                    await asyncio.sleep(SEGMENT_RETRY_DELAY * attempt)
+
+        log.error(f"Stream proxy failed after {SEGMENT_RETRY_COUNT} retries: {url[:80]}... - {last_error}")
+        raise HTTPException(status_code=502, detail="Failed to fetch stream data")
+
+
+@app.get("/stream/active")
+async def stream_active():
+    """Return count of active stream sessions (for monitoring)."""
+    now = time.time()
+    with _stream_sessions_lock:
+        active = {k: v for k, v in _stream_sessions.items() if now - v["created"] < STREAM_SESSION_TTL}
+        return {
+            "active_sessions": len(active),
+            "sessions": [
+                {
+                    "id": k,
+                    "slug": v["slug"],
+                    "season": v["season"],
+                    "episode": v["episode"],
+                    "age_minutes": round((now - v["created"]) / 60, 1),
+                }
+                for k, v in active.items()
+            ]
+        }
 
 
 @app.get("/health")
