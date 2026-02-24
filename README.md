@@ -11,7 +11,7 @@ Anime-Streaming von aniworld.to in Emby - als native TV-Show Library.
 - **Passwort-Schutz:** Dashboard Login mit SHA-256 Auth
 - **API Server:** Scrapt aniworld.to, cached Episoden + Stream-URLs
 - **Metadata Server:** AniList/MAL/AniDB Metadata, Cover-Bilder, Genres, Ratings
-- **Stream Proxy:** Löst Hoster-URLs on-demand auf (302 Redirect, VOE via Headless Chromium)
+- **Stream Proxy:** HLS-Streams werden durch den Proxy geleitet (Retry bei fehlenden Segmenten, kein Bild/Ton Desync)
 - **Sync Service:** Erstellt .strm/.nfo Dateien für Emby Library
 - **Standalone Installer:** Eine Datei, interaktives Menü, Auto-Update von GitHub
 - **Kein Plugin nötig:** Alles über Standard-Emby-Bibliothek
@@ -88,7 +88,7 @@ Nach der Installation erreichbar unter: **http://localhost:5081/**
 │                                         │
 │  ┌───────────────────────────────┐      │
 │  │  Proxy + Dashboard :5081      │      │
-│  │  .strm → resolve → 302       │      │
+│  │  .strm → resolve → HLS proxy  │      │
 │  │  Web-UI: Status/Sync/Scrape  │      │
 │  └───────────────────────────────┘      │
 └─────────────────────────────────────────┘

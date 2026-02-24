@@ -162,6 +162,14 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] Nur anlegen, NICHT aktualisieren (Hinweis auf manuellen Library-Scan)
 - [x] API-Key + URL in Config speichern ([emby] Section)
 
+#### HLS Stream Proxy ✅
+- [x] Stream Proxy statt 302 Redirect (behebt Bild/Ton Desync bei HLS Streams)
+- [x] m3u8 Playlists werden durch Proxy gereicht und URLs umgeschrieben
+- [x] Segment-Proxy mit Retry-Logik (3 Versuche bei Fehlern)
+- [x] Stream-Sessions mit 4h TTL + Auto-Cleanup
+- [x] /stream/active Monitoring Endpoint
+- [x] httpx async HTTP Client
+
 #### Sonstiges
 - [x] GitHub Release erstellen (v1.0.0)
 
