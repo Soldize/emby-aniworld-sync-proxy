@@ -87,6 +87,16 @@ status_check() {
     else
         echo -e "  ${RED}❌ aniworld-sync.timer (nicht aktiv)${NC}"
     fi
+    # WARP Status
+    if command -v warp-cli &>/dev/null; then
+        local warp_st
+        warp_st=$(warp-cli status 2>&1 | head -1)
+        if echo "$warp_st" | grep -qi "connected"; then
+            echo -e "  ${GREEN}✅ WARP Proxy${NC} ${CYAN}:40000${NC}"
+        else
+            echo -e "  ${YELLOW}⚠️  WARP Proxy (nicht verbunden)${NC}"
+        fi
+    fi
     echo ""
 }
 
@@ -366,6 +376,170 @@ EOF
     echo ""
 }
 
+# ── Cloudflare WARP (optional) ─────────────────────────────────────
+
+check_warp_status() {
+    # Returns: "connected", "disconnected", "not_installed"
+    if ! command -v warp-cli &>/dev/null; then
+        echo "not_installed"
+        return
+    fi
+    local status
+    status=$(warp-cli status 2>&1 | head -1)
+    if echo "$status" | grep -qi "connected"; then
+        echo "connected"
+    else
+        echo "disconnected"
+    fi
+}
+
+install_warp() {
+    echo ""
+    echo -e "${BOLD}🌐 Cloudflare WARP (SOCKS5 Proxy)${NC}"
+    echo ""
+    echo "  WARP verschleiert die Server-IP bei ausgehenden Requests."
+    echo "  Nötig wenn Hoster (Vidmoly, Filemoon) Datacenter-IPs blocken."
+    echo "  WARP läuft im Proxy-Modus (nur Port 40000, kein VPN)."
+    echo ""
+
+    local warp_status
+    warp_status=$(check_warp_status)
+
+    if [ "$warp_status" = "connected" ]; then
+        local warp_ip
+        warp_ip=$(curl -s --socks5-hostname 127.0.0.1:40000 https://ifconfig.me 2>/dev/null || echo "?")
+        echo -e "  ${GREEN}✅ WARP ist bereits installiert und verbunden${NC}"
+        echo -e "  ${GREEN}   IP über WARP: $warp_ip${NC}"
+        echo ""
+
+        # Config eintragen falls noch nicht vorhanden
+        if ! grep -q "warp_socks5" "$CONFIG_DIR/config.ini" 2>/dev/null; then
+            _add_warp_to_config
+        fi
+        return
+    fi
+
+    if [ "$warp_status" = "disconnected" ]; then
+        echo -e "  ${YELLOW}⚠️  WARP ist installiert aber nicht verbunden${NC}"
+        echo ""
+        read -p "  WARP jetzt verbinden? (j/n) [j]: " do_connect
+        if [ "$do_connect" != "n" ] && [ "$do_connect" != "N" ]; then
+            _connect_warp
+        fi
+        return
+    fi
+
+    # Nicht installiert
+    read -p "  WARP installieren? (j/n) [n]: " do_warp
+    if [ "$do_warp" != "j" ] && [ "$do_warp" != "J" ] && [ "$do_warp" != "ja" ]; then
+        echo -e "  ${MUTED}Übersprungen. Kann später mit ./install.sh nachinstalliert werden.${NC}"
+        return
+    fi
+
+    echo ""
+    echo -e "${YELLOW}Installiere Cloudflare WARP...${NC}"
+
+    # GPG Key + Repo
+    local distro
+    distro=$(lsb_release -cs 2>/dev/null || echo "bookworm")
+    curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg 2>/dev/null
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $distro main" > /etc/apt/sources.list.d/cloudflare-client.list
+    apt-get update -qq 2>/dev/null
+    apt-get install -y -qq cloudflare-warp > /dev/null 2>&1
+
+    if ! command -v warp-cli &>/dev/null; then
+        echo -e "${RED}❌ WARP Installation fehlgeschlagen!${NC}"
+        echo -e "  ${MUTED}Manuell installieren: https://developers.cloudflare.com/warp-client/get-started/linux/${NC}"
+        return
+    fi
+
+    echo -e "${GREEN}✅ WARP installiert${NC}"
+
+    # Registrieren + Proxy-Modus
+    echo -e "${YELLOW}Registriere WARP...${NC}"
+    warp-cli registration new 2>/dev/null || true
+    warp-cli mode proxy 2>/dev/null || true
+    warp-cli tunnel protocol set MASQUE 2>/dev/null || true
+
+    echo -e "${GREEN}✅ WARP konfiguriert (Proxy-Modus, Port 40000, MASQUE)${NC}"
+    echo ""
+
+    echo -e "${YELLOW}⚠️  Firewall-Hinweis:${NC}"
+    echo "  WARP braucht eingehende UDP-Antworten von Cloudflare."
+    echo "  Falls die Verbindung fehlschlägt, diese Regeln hinzufügen:"
+    echo ""
+    echo "    sudo ufw allow in proto udp from 162.159.192.0/24"
+    echo "    sudo ufw allow in proto udp from 162.159.198.0/24"
+    echo ""
+    echo "  Bei Hetzner: Auch in der Hetzner Firewall eingehend UDP erlauben."
+    echo ""
+
+    _connect_warp
+}
+
+_connect_warp() {
+    echo -e "${YELLOW}Verbinde WARP...${NC}"
+
+    # Sicherstellen: Proxy-Modus + MASQUE
+    warp-cli mode proxy 2>/dev/null || true
+    warp-cli tunnel protocol set MASQUE 2>/dev/null || true
+    warp-cli disconnect 2>/dev/null || true
+    sleep 1
+    warp-cli connect 2>/dev/null || true
+
+    # Warten auf Verbindung (max 30s)
+    local tries=0
+    while [ $tries -lt 30 ]; do
+        local status
+        status=$(warp-cli status 2>&1 | head -1)
+        if echo "$status" | grep -qi "^Status update: Connected"; then
+            break
+        fi
+        sleep 1
+        tries=$((tries + 1))
+    done
+
+    local warp_status
+    warp_status=$(check_warp_status)
+
+    if [ "$warp_status" = "connected" ]; then
+        local warp_ip
+        warp_ip=$(curl -s --max-time 5 --socks5-hostname 127.0.0.1:40000 https://ifconfig.me 2>/dev/null || echo "?")
+        echo -e "${GREEN}✅ WARP verbunden! IP: $warp_ip${NC}"
+        _add_warp_to_config
+    else
+        echo -e "${RED}❌ WARP konnte nicht verbinden.${NC}"
+        echo -e "  ${YELLOW}Prüfe Firewall (eingehend UDP von 162.159.192.0/24 + 162.159.198.0/24)${NC}"
+        echo -e "  ${MUTED}Status: warp-cli status${NC}"
+        echo -e "  ${MUTED}Logs: journalctl -u warp-svc -n 20${NC}"
+        echo ""
+        read -p "  Trotzdem WARP in Config eintragen (für spätere Verbindung)? (j/n) [n]: " do_anyway
+        if [ "$do_anyway" = "j" ] || [ "$do_anyway" = "J" ]; then
+            _add_warp_to_config
+        fi
+    fi
+}
+
+_add_warp_to_config() {
+    if [ ! -f "$CONFIG_DIR/config.ini" ]; then
+        return
+    fi
+    if grep -q "warp_socks5" "$CONFIG_DIR/config.ini" 2>/dev/null; then
+        return  # Schon drin
+    fi
+    # Unter [proxy] Section eintragen
+    if grep -q "^\[proxy\]" "$CONFIG_DIR/config.ini" 2>/dev/null; then
+        sed -i '/^\[proxy\]/a warp_socks5 = socks5:\/\/127.0.0.1:40000' "$CONFIG_DIR/config.ini"
+    else
+        cat >> "$CONFIG_DIR/config.ini" << 'EOF'
+
+[proxy]
+warp_socks5 = socks5://127.0.0.1:40000
+EOF
+    fi
+    echo -e "  ${GREEN}✅ WARP Proxy in Config eingetragen${NC}"
+}
+
 install_services() {
     echo -e "${YELLOW}Installiere systemd Services...${NC}"
 
@@ -540,6 +714,7 @@ full_install() {
     install_venv
     configure
     set_dashboard_password
+    install_warp
     install_services
     set_permissions
 
@@ -758,9 +933,31 @@ check_for_updates() {
 
     echo -e "${GREEN}✅ Dateien aktualisiert${NC}"
 
-    # Berechtigungen + venv (inkl. Playwright) + Restart
+    # Berechtigungen + venv (inkl. Playwright) + WARP check + Restart
     set_permissions
     install_venv
+
+    # WARP Status prüfen (bei Update nur Status-Check, keine Neuinstallation)
+    local warp_status
+    warp_status=$(check_warp_status)
+    if [ "$warp_status" = "connected" ]; then
+        local warp_ip
+        warp_ip=$(curl -s --max-time 5 --socks5-hostname 127.0.0.1:40000 https://ifconfig.me 2>/dev/null || echo "?")
+        echo -e "  ${GREEN}✅ WARP aktiv (IP: $warp_ip)${NC}"
+    elif [ "$warp_status" = "disconnected" ]; then
+        echo -e "  ${YELLOW}⚠️  WARP installiert aber nicht verbunden${NC}"
+        read -p "  WARP verbinden? (j/n) [j]: " do_warp_connect
+        if [ "$do_warp_connect" != "n" ] && [ "$do_warp_connect" != "N" ]; then
+            _connect_warp
+        fi
+    elif ! grep -q "warp_socks5" "$CONFIG_DIR/config.ini" 2>/dev/null; then
+        echo ""
+        echo -e "  ${YELLOW}💡 Tipp: WARP Proxy hilft gegen Hoster-IP-Blocking.${NC}"
+        read -p "  WARP jetzt installieren? (j/n) [n]: " do_warp_install
+        if [ "$do_warp_install" = "j" ] || [ "$do_warp_install" = "J" ]; then
+            install_warp
+        fi
+    fi
 
     echo ""
     echo -e "${YELLOW}Starte Services neu...${NC}"
@@ -804,11 +1001,12 @@ show_menu() {
     echo -e "  ${CYAN}6)${NC} Passwort zurücksetzen     Dashboard Passwort neu setzen"
     echo -e "  ${CYAN}7)${NC} Backup erstellen          DB + Config als ZIP exportieren"
     echo -e "  ${CYAN}8)${NC} Restore                   Backup-ZIP wiederherstellen"
-    echo -e "  ${CYAN}9)${NC} Deinstallieren            Alles entfernen"
-    echo -e "  ${CYAN}10)${NC} Anleitung                Wie funktioniert das alles?"
+    echo -e "  ${CYAN}9)${NC} WARP Proxy                Cloudflare WARP installieren/prüfen"
+    echo -e "  ${CYAN}10)${NC} Deinstallieren            Alles entfernen"
+    echo -e "  ${CYAN}11)${NC} Anleitung                Wie funktioniert das alles?"
     echo -e "  ${CYAN}0)${NC} Beenden"
     echo ""
-    read -p "Auswahl [1-10/0]: " choice
+    read -p "Auswahl [1-11/0]: " choice
 }
 
 uninstall() {
@@ -877,6 +1075,10 @@ show_guide() {
     echo "    client = DEIN_CLIENT_NAME"
     echo "    client_version = 1"
     echo "    Registrieren: https://anidb.net/software/add"
+    echo ""
+    echo "  [proxy]          WARP SOCKS5 Proxy (optional)"
+    echo "    warp_socks5 = socks5://127.0.0.1:40000"
+    echo "    Installieren: Menü (9) oder bei Erstinstallation"
     echo ""
     echo -e "${BOLD}Befehle:${NC}"
     echo ""
@@ -1089,8 +1291,9 @@ while true; do
         6) reset_dashboard_password ;;
         7) create_backup ;;
         8) restore_backup ;;
-        9) uninstall ;;
-        10) show_guide ;;
+        9) install_warp; read -p "Enter für Menü..." ;;
+        10) uninstall ;;
+        11) show_guide ;;
         0) echo "Bye! 👋"; exit 0 ;;
         *) echo -e "${RED}Ungültige Auswahl${NC}"; sleep 1 ;;
     esac
