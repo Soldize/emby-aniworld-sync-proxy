@@ -15,7 +15,7 @@ GITHUB_RAW="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 GITHUB_API="https://api.github.com/repos/$GITHUB_REPO"
 VERSION_FILE="$INSTALL_DIR/.version"
 REQUIRED_FILES="api_server.py metadata_server.py proxy.py sync.py requirements.txt"
-INSTALLER_VERSION="2026-02-25a"
+INSTALLER_VERSION="2026-02-25b"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -91,7 +91,7 @@ status_check() {
     # WARP Status
     if command -v warp-cli &>/dev/null; then
         local warp_st
-        warp_st=$(warp-cli status 2>&1)
+        warp_st=$(warp-cli --accept-tos status 2>&1)
         if echo "$warp_st" | grep -qi "Status update: Connected"; then
             echo -e "  ${GREEN}✅ WARP Proxy${NC} ${CYAN}:40000${NC}"
         else
@@ -386,7 +386,7 @@ check_warp_status() {
         return
     fi
     local status
-    status=$(warp-cli status 2>&1)
+    status=$(warp-cli --accept-tos status 2>&1)
     if echo "$status" | grep -qi "Status update: Connected"; then
         echo "connected"
     else
@@ -458,9 +458,9 @@ install_warp() {
 
     # Registrieren + Proxy-Modus
     echo -e "${YELLOW}Registriere WARP...${NC}"
-    warp-cli registration new 2>/dev/null || true
-    warp-cli mode proxy 2>/dev/null || true
-    warp-cli tunnel protocol set MASQUE 2>/dev/null || true
+    warp-cli --accept-tos registration new 2>/dev/null || true
+    warp-cli --accept-tos mode proxy 2>/dev/null || true
+    warp-cli --accept-tos tunnel protocol set MASQUE 2>/dev/null || true
 
     echo -e "${GREEN}✅ WARP konfiguriert (Proxy-Modus, Port 40000, MASQUE)${NC}"
     echo ""
@@ -482,17 +482,17 @@ _connect_warp() {
     echo -e "${YELLOW}Verbinde WARP...${NC}"
 
     # Sicherstellen: Proxy-Modus + MASQUE
-    warp-cli mode proxy 2>/dev/null || true
-    warp-cli tunnel protocol set MASQUE 2>/dev/null || true
-    warp-cli disconnect 2>/dev/null || true
+    warp-cli --accept-tos mode proxy 2>/dev/null || true
+    warp-cli --accept-tos tunnel protocol set MASQUE 2>/dev/null || true
+    warp-cli --accept-tos disconnect 2>/dev/null || true
     sleep 1
-    warp-cli connect 2>/dev/null || true
+    warp-cli --accept-tos connect 2>/dev/null || true
 
     # Warten auf Verbindung (max 30s)
     local tries=0
     while [ $tries -lt 30 ]; do
         local status
-        status=$(warp-cli status 2>&1)
+        status=$(warp-cli --accept-tos status 2>&1)
         if echo "$status" | grep -qi "Status update: Connected"; then
             break
         fi
