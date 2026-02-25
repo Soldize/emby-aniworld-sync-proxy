@@ -15,6 +15,7 @@ GITHUB_RAW="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 GITHUB_API="https://api.github.com/repos/$GITHUB_REPO"
 VERSION_FILE="$INSTALL_DIR/.version"
 REQUIRED_FILES="api_server.py metadata_server.py proxy.py sync.py requirements.txt"
+INSTALLER_VERSION="2026-02-25a"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,7 +31,7 @@ NC='\033[0m'
 header() {
     echo ""
     echo -e "${GREEN}=========================================${NC}"
-    echo -e "${GREEN} AniWorld for Emby - Installer${NC}"
+    echo -e "${GREEN} AniWorld for Emby - Installer ${MUTED}v${INSTALLER_VERSION}${NC}"
     echo -e "${GREEN}=========================================${NC}"
     echo ""
 }
