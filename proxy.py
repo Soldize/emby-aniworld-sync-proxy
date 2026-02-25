@@ -665,6 +665,17 @@ async def dashboard_status():
     # Proxy (wir selbst)
     services["proxy"] = {"status": "online", "port": PROXY_PORT}
 
+    # WARP Proxy
+    if WARP_PROXY:
+        try:
+            async with httpx.AsyncClient(proxy=WARP_PROXY, timeout=httpx.Timeout(5.0)) as warp_client:
+                wr = await warp_client.get("https://ifconfig.me")
+                services["warp"] = {"status": "online", "proxy": WARP_PROXY, "ip": wr.text.strip()}
+        except Exception:
+            services["warp"] = {"status": "offline", "proxy": WARP_PROXY}
+    else:
+        services["warp"] = {"status": "disabled"}
+
     # Sync
     if sync_process and sync_process.poll() is None:
         # Parse progress from log lines: [123/2361] Syncing: ...
@@ -1416,18 +1427,22 @@ async function fetchStatus() {
 
 function renderStatus(data) {
   const grid = document.getElementById('status-grid');
-  const names = {api: 'API Server', metadata: 'Metadata Server', proxy: 'Proxy', sync: 'STRM-Sync'};
+  const names = {api: 'API Server', metadata: 'Metadata Server', proxy: 'Proxy', sync: 'STRM-Sync', warp: 'WARP Proxy'};
   let html = '';
   const restartable = ['api', 'metadata', 'proxy'];
   for (const [key, info] of Object.entries(data)) {
     const st = info.status || 'offline';
+    if (key === 'warp' && st === 'disabled') continue;
     const restartBtn = restartable.includes(key)
       ? `<button class="btn-restart" onclick="restartService('${key}')" title="Service neustarten">&#x21bb;</button>`
       : '';
+    let extra = '';
+    if (info.port) extra = `<span class="port">:${info.port}</span>`;
+    if (key === 'warp' && info.ip) extra = `<span class="port" title="WARP IP">${info.ip}</span>`;
     html += `<div class="card">
       <h3>${names[key] || key} ${restartBtn}</h3>
       <span class="status-dot ${st}"></span>${st}
-      ${info.port ? `<span class="port">:${info.port}</span>` : ''}
+      ${extra}
     </div>`;
   }
   grid.innerHTML = html;
