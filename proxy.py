@@ -669,7 +669,7 @@ async def dashboard_status():
     if WARP_PROXY:
         try:
             async with httpx.AsyncClient(proxy=WARP_PROXY, timeout=httpx.Timeout(5.0)) as warp_client:
-                wr = await warp_client.get("https://ifconfig.me")
+                wr = await warp_client.get("https://ifconfig.me/ip", headers={"Accept": "text/plain"})
                 services["warp"] = {"status": "online", "proxy": WARP_PROXY, "ip": wr.text.strip()}
         except Exception:
             services["warp"] = {"status": "offline", "proxy": WARP_PROXY}
