@@ -918,12 +918,23 @@ async def restore_backup(request: Request):
 
 @app.get("/api/dashboard/hoster-health")
 async def hoster_health(request: Request):
-    """Hoster Health Stats vom API-Server."""
-    try:
-        r = requests.get(f"{API_BASE}/api/hoster-health", timeout=10)
-        return JSONResponse(r.json() if r.ok else [])
-    except Exception:
-        return JSONResponse([])
+    """Live-Check ob Hoster erreichbar sind."""
+    hosters = {
+        "VOE": "https://voe.sx",
+        "Vidmoly": "https://vidmoly.biz",
+        "Filemoon": "https://filemoon.to",
+        "Streamtape": "https://streamtape.com",
+        "Doodstream": "https://dood.to",
+    }
+    results = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), follow_redirects=True, proxy=WARP_PROXY or None) as client:
+        for name, url in hosters.items():
+            try:
+                r = await client.get(url)
+                results.append({"name": name, "status": "online", "code": r.status_code})
+            except Exception:
+                results.append({"name": name, "status": "offline", "code": 0})
+    return JSONResponse(results)
 
 @app.get("/api/dashboard/recent-changes")
 async def recent_changes(request: Request, days: int = 7, limit: int = 100):
@@ -2083,25 +2094,24 @@ async function cronRunNow(jobId) {
 // === Hoster Health ===
 async function loadHosterHealth() {
   const el = document.getElementById('hoster-health');
+  el.innerHTML = '<span style="color:var(--muted)">Prüfe Hoster...</span>';
   try {
     const r = await fetch(API + '/api/dashboard/hoster-health');
     const data = await r.json();
     if (!data || data.length === 0) {
-      el.innerHTML = '<span style="color:var(--muted)">Keine Daten (noch kein Stream resolved)</span>';
+      el.innerHTML = '<span style="color:var(--muted)">Keine Hoster konfiguriert</span>';
       return;
     }
-    let html = '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">';
+    let html = '<div style="display:flex; flex-wrap:wrap; gap:10px;">';
     data.forEach(h => {
-      const rate = h.successRate;
-      let color = 'var(--green)';
-      let icon = '✅';
-      if (rate < 50) { color = 'var(--red)'; icon = '❌'; }
-      else if (rate < 80) { color = 'var(--yellow, #f0ad4e)'; icon = '⚠️'; }
-      const failures = h.recentFailures > 0 ? ' | <span style="color:var(--red)">' + h.recentFailures + ' Fehler (6h)</span>' : '';
-      html += '<div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px;">';
-      html += '<div style="font-weight:bold; margin-bottom:6px;">' + icon + ' ' + h.name + '</div>';
-      html += '<div style="font-size:1.2rem; color:' + color + '; font-weight:bold;">' + rate + '%</div>';
-      html += '<div style="font-size:0.8rem; color:var(--muted); margin-top:4px;">' + h.resolved + '/' + h.total + ' resolved' + failures + '</div>';
+      const online = h.status === 'online';
+      const icon = online ? '🟢' : '🔴';
+      const color = online ? 'var(--green)' : 'var(--red)';
+      const label = online ? 'Online' : 'Offline';
+      html += '<div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 16px; display:flex; align-items:center; gap:8px;">';
+      html += '<span>' + icon + '</span>';
+      html += '<span style="font-weight:bold;">' + h.name + '</span>';
+      html += '<span style="color:' + color + '; font-size:0.85rem;">' + label + '</span>';
       html += '</div>';
     });
     html += '</div>';
