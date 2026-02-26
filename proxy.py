@@ -924,7 +924,7 @@ async def hoster_health(request: Request):
         "Vidmoly": "https://vidmoly.biz",
         "Filemoon": "https://filemoon.to",
         "Streamtape": "https://streamtape.com",
-        "Doodstream": "https://dood.to",
+        "Doodstream": "https://doodstream.com",
     }
     results = []
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0), follow_redirects=True, proxy=WARP_PROXY or None) as client:
