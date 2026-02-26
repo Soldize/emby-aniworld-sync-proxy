@@ -825,6 +825,17 @@ async def incremental_sync_status():
     except Exception:
         return {"running": False, "result": None}
 
+@app.post("/api/dashboard/full-sync")
+async def full_sync_start():
+    """Full Sync über API-Server starten (alles neu scrapen)."""
+    try:
+        r = requests.post(f"{API_BASE}/api/sync/full", timeout=10)
+        if r.ok:
+            return r.json()
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+    except requests.ConnectionError:
+        raise HTTPException(status_code=502, detail="API Server nicht erreichbar")
+
 @app.get("/api/dashboard/full-sync/status")
 async def full_sync_status():
     """Status des Full Sync vom API-Server."""
@@ -1247,7 +1258,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <button class="btn btn-start" id="btn-incremental" onclick="incrementalSync()">🔄 Änderungen scrapen</button>
     <span style="color:var(--muted); font-size:0.85rem;">(neue Serien + Episoden von aniworld.to)</span>
   </div>
-  <div id="incremental-result" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
+  <div id="incremental-progress" style="margin-top:10px;"></div>
+  <div id="incremental-result" style="margin-top:6px; font-size:0.85rem; color:var(--muted);"></div>
+  <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px; margin-top:12px;">
+    <button class="btn btn-start" id="btn-full-sync" onclick="fullSync()">🔄 Alles scrapen</button>
+    <span style="color:var(--muted); font-size:0.85rem;">(kompletter Katalog neu scrapen)</span>
+  </div>
+  <div id="full-sync-progress" style="margin-top:10px;"></div>
+  <div id="full-sync-result" style="margin-top:6px; font-size:0.85rem; color:var(--muted);"></div>
 </div>
 
 <!-- Metadata Sync -->
@@ -1261,32 +1279,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div id="meta-result" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
 </div>
 
-<!-- Sync Control -->
+<!-- STRM-Sync -->
 <div class="section">
   <h2>STRM-Sync</h2>
-  <div id="sync-progress" style="margin-bottom:12px; padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:0.9rem;"></div>
-  <div class="btn-group">
-    <button class="btn btn-start" id="btn-sync-start" onclick="syncStart()">▶ Starten</button>
-    <button class="btn btn-stop" id="btn-sync-stop" onclick="syncStop()" disabled>⬛ Stoppen</button>
+  <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
+    <button class="btn btn-start" id="btn-strm-sync" onclick="strmSync()">🔄 STRM-Sync starten</button>
+    <span style="color:var(--muted); font-size:0.85rem;">(STRM-Dateien für Emby generieren)</span>
   </div>
+  <div id="strm-progress" style="margin-top:10px;"></div>
+  <div id="strm-result" style="margin-top:6px; font-size:0.85rem; color:var(--muted);"></div>
 </div>
 
-<!-- Detail Scrape -->
-<div class="section">
-  <h2>Detail Scrape</h2>
-  <div id="scrape-status" style="margin-bottom:12px; padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:0.9rem;"></div>
-  <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
-    <button class="btn btn-start" id="btn-detail-batch" onclick="detailBatch()">🔄 Batch Scrape</button>
-    <span style="color:var(--muted);margin:0 4px;">oder</span>
-    <input type="text" id="detail-slug" placeholder="anime-slug eingeben..." style="
-      padding:8px 12px; border:1px solid var(--border); border-radius:6px;
-      background:var(--surface); color:var(--text); font-size:0.9rem;
-      width:220px; max-width:100%; flex:1; min-width:150px;
-    ">
-    <button class="btn btn-save" id="btn-detail-single" onclick="detailSingle()">🔍 Einzeln Scrapen</button>
-  </div>
-  <div id="detail-result" style="margin-top:10px; font-size:0.85rem; color:var(--muted);"></div>
-</div>
 
 </div><!-- /tab-dashboard -->
 
@@ -1458,81 +1461,10 @@ function renderStatus(data) {
   }
   grid.innerHTML = html;
 
-  // Sync buttons
-  const isRunning = data.sync && data.sync.status === 'running';
-  document.getElementById('btn-sync-start').disabled = isRunning;
-  document.getElementById('btn-sync-stop').disabled = !isRunning;
-
-  if (isRunning && !logInterval) {
-    logInterval = setInterval(fetchLog, 1500);
-  } else if (!isRunning && logInterval) {
-    clearInterval(logInterval);
-    logInterval = null;
-    fetchLog(); // letztes Update
-  }
-
-  // Sync Progress
-  const syncBox = document.getElementById('sync-progress');
-  if (data.sync) {
-    const s = data.sync;
-    if (s.status === 'running' && s.total > 0) {
-      const pct = Math.round((s.current / s.total) * 100);
-      syncBox.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span>🔄 <strong>STRM-Sync:</strong> Läuft...</span>
-          <span style="color:var(--accent); font-weight:600;">${pct}%</span>
-        </div>
-        <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden;">
-          <div style="background:var(--accent); height:100%; width:${pct}%; transition:width 0.5s;"></div>
-        </div>
-        <div style="margin-top:6px; font-size:0.8rem; color:var(--muted);">
-          ${s.current} / ${s.total} Anime — ${s.currentSlug || ''}
-        </div>`;
-    } else if (s.status === 'running') {
-      syncBox.innerHTML = '<span>🔄 <strong>STRM-Sync:</strong> Startet...</span>';
-    } else if (s.status === 'finished') {
-      const icon = s.exit_code === 0 ? '✅' : '❌';
-      syncBox.innerHTML = `<span>${icon} <strong>STRM-Sync:</strong> ${s.result || (s.exit_code === 0 ? 'Abgeschlossen' : 'Fehler (Exit ' + s.exit_code + ')')}</span>`;
-    } else {
-      syncBox.innerHTML = '<span style="color:var(--muted);">⏸️ <strong>STRM-Sync:</strong> Bereit</span>';
-    }
-  }
-
-  // Scrape Status
-  const apiDetail = data.api && data.api.detail;
-  const scrapeBox = document.getElementById('scrape-status');
-  if (apiDetail && apiDetail.animeCount !== undefined) {
-    const total = apiDetail.animeCount;
-    const scraped = apiDetail.detailsScraped || 0;
-    const pending = apiDetail.detailsPending || 0;
-    const running = apiDetail.detailSyncRunning;
-    const pct = total > 0 ? Math.round((scraped / total) * 100) : 0;
-
-    let statusIcon = running ? '🔄' : (pending === 0 ? '✅' : '⏸️');
-    let statusText = running ? 'Läuft...' : (pending === 0 ? 'Komplett' : 'Pausiert');
-
-    // Scrape Buttons sperren/freigeben
-    const batchBtn = document.getElementById('btn-detail-batch');
-    const singleBtn = document.getElementById('btn-detail-single');
-    const incBtn = document.getElementById('btn-incremental');
-    if (batchBtn) batchBtn.disabled = running;
-    if (singleBtn) singleBtn.disabled = running;
-    if (incBtn) incBtn.disabled = running;
-
-    scrapeBox.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <span>${statusIcon} <strong>Scrape Status:</strong> ${statusText}</span>
-        <span style="color:var(--accent); font-weight:600;">${pct}%</span>
-      </div>
-      <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden;">
-        <div style="background:${pending === 0 ? 'var(--green)' : 'var(--accent)'}; height:100%; width:${pct}%; transition:width 0.5s;"></div>
-      </div>
-      <div style="margin-top:6px; font-size:0.8rem; color:var(--muted);">
-        ${scraped} / ${total} Anime gescraped — ${pending} offen
-      </div>
-    `;
-  } else {
-    scrapeBox.innerHTML = '<span style="color:var(--muted);">Scrape Status: API nicht erreichbar</span>';
+  // STRM-Sync button state from status
+  const strmBtn = document.getElementById('btn-strm-sync');
+  if (data.sync && data.sync.status === 'running') {
+    if (strmBtn) strmBtn.disabled = true;
   }
 
   // Metadata Sync Status
@@ -1584,33 +1516,61 @@ function renderStatus(data) {
   }
 }
 
-async function syncStart() {
+async function strmSync() {
+  const btn = document.getElementById('btn-strm-sync');
+  const progressEl = document.getElementById('strm-progress');
+  const resultEl = document.getElementById('strm-result');
+  btn.disabled = true;
+  resultEl.textContent = 'STRM-Sync wird gestartet...';
+  progressEl.innerHTML = '';
   try {
-    logOffset = 0;
-    logOffset = 0;
     const r = await fetch(API + '/api/dashboard/sync/start', {method:'POST'});
-    if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
-    toast('Sync gestartet');
-    fetchStatus();
-    logInterval = setInterval(fetchLog, 1500);
-  } catch(e) { toast('Fehler: ' + e, false); }
+    if (!r.ok) { const e = await r.json(); toast(e.detail, false); btn.disabled = false; return; }
+    toast('STRM-Sync gestartet!');
+    resultEl.textContent = '';
+    pollStrmSync(progressEl, resultEl, btn);
+  } catch(e) { toast('Fehler: ' + e, false); btn.disabled = false; }
 }
 
-async function syncStop() {
-  try {
-    const r = await fetch(API + '/api/dashboard/sync/stop', {method:'POST'});
-    if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
-    toast('Sync gestoppt');
-    fetchStatus();
-  } catch(e) { toast('Fehler: ' + e, false); }
+function renderProgressBar(pct, label, detail) {
+  return `
+    <div style="padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span>🔄 <strong>${label}</strong></span>
+        <span style="color:var(--accent); font-weight:600;">${pct}%</span>
+      </div>
+      <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden;">
+        <div style="background:var(--accent); height:100%; width:${pct}%; transition:width 0.5s;"></div>
+      </div>
+      ${detail ? `<div style="margin-top:6px; font-size:0.8rem; color:var(--muted);">${detail}</div>` : ''}
+    </div>`;
 }
 
-async function fetchLog() {
-  try {
-    const r = await fetch(API + '/api/dashboard/sync/log?offset=' + logOffset);
-    const data = await r.json();
-    logOffset = data.total;
-  } catch(e) {}
+function pollStrmSync(progressEl, resultEl, btn) {
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch(API + '/api/dashboard/status');
+      const data = await r.json();
+      const s = data.sync;
+      if (!s || s.status !== 'running') {
+        clearInterval(poll);
+        btn.disabled = false;
+        progressEl.innerHTML = '';
+        if (s && s.status === 'finished') {
+          const icon = s.exit_code === 0 ? '✅' : '❌';
+          resultEl.innerHTML = `${icon} ${s.result || (s.exit_code === 0 ? 'Abgeschlossen' : 'Fehler (Exit ' + s.exit_code + ')')}`;
+          toast(s.exit_code === 0 ? 'STRM-Sync abgeschlossen!' : 'STRM-Sync fehlgeschlagen!', s.exit_code === 0);
+        }
+        return;
+      }
+      if (s.total > 0) {
+        const pct = Math.round((s.current / s.total) * 100);
+        progressEl.innerHTML = renderProgressBar(pct, 'STRM-Sync läuft...', `${s.current} / ${s.total} Anime${s.currentSlug ? ' - ' + s.currentSlug : ''}`);
+      } else {
+        progressEl.innerHTML = renderProgressBar(0, 'STRM-Sync startet...', '');
+      }
+    } catch(e) { /* keep polling */ }
+  }, 3000);
 }
 
 async function loadConfig() {
@@ -1651,22 +1611,44 @@ async function metadataSync() {
 
 async function incrementalSync() {
   const btn = document.getElementById('btn-incremental');
+  const progressEl = document.getElementById('incremental-progress');
   const resultEl = document.getElementById('incremental-result');
   btn.disabled = true;
   resultEl.textContent = 'Scrape läuft...';
+  progressEl.innerHTML = '';
   try {
     const r = await fetch(API + '/api/dashboard/incremental-sync', {method:'POST'});
     if (!r.ok) {
-      if (r.status === 409) { toast('Incremental Sync läuft bereits!', false); return; }
-      const e = await r.json(); toast(e.detail, false); return;
+      if (r.status === 409) { toast('Incremental Sync läuft bereits!', false); btn.disabled = false; return; }
+      const e = await r.json(); toast(e.detail, false); btn.disabled = false; return;
     }
     toast('Änderungen werden gescraped...');
-    pollSyncStatus('incremental', resultEl, btn);
+    resultEl.textContent = '';
+    pollScrapeStatus('incremental', '/api/dashboard/incremental-sync/status', progressEl, resultEl, btn);
   } catch(e) { toast('Fehler: ' + e, false); btn.disabled = false; }
 }
 
-async function pollSyncStatus(mode, resultEl, btn) {
-  const endpoint = mode === 'incremental' ? '/api/dashboard/incremental-sync/status' : '/api/dashboard/full-sync/status';
+async function fullSync() {
+  const btn = document.getElementById('btn-full-sync');
+  const progressEl = document.getElementById('full-sync-progress');
+  const resultEl = document.getElementById('full-sync-result');
+  btn.disabled = true;
+  resultEl.textContent = 'Full Sync wird gestartet...';
+  progressEl.innerHTML = '';
+  try {
+    const r = await fetch(API + '/api/dashboard/full-sync', {method:'POST'});
+    if (!r.ok) {
+      if (r.status === 409) { toast('Full Sync läuft bereits!', false); btn.disabled = false; return; }
+      const e = await r.json(); toast(e.detail, false); btn.disabled = false; return;
+    }
+    toast('Full Sync gestartet!');
+    resultEl.textContent = '';
+    pollScrapeStatus('full', '/api/dashboard/full-sync/status', progressEl, resultEl, btn);
+  } catch(e) { toast('Fehler: ' + e, false); btn.disabled = false; }
+}
+
+function pollScrapeStatus(mode, endpoint, progressEl, resultEl, btn) {
+  const label = mode === 'incremental' ? 'Änderungen scrapen...' : 'Alles scrapen...';
   const poll = setInterval(async () => {
     try {
       const r = await fetch(API + endpoint);
@@ -1675,21 +1657,19 @@ async function pollSyncStatus(mode, resultEl, btn) {
         const p = data.progress;
         if (p && p.total) {
           const pct = Math.round((p.checked / p.total) * 100);
-          const bar = '█'.repeat(Math.round(pct/5)) + '░'.repeat(20-Math.round(pct/5));
-          let info = p.phase === 'new_anime'
-            ? `🆕 Neue Anime: ${p.checked}/${p.total}`
-            : `🔍 ${p.checked}/${p.total} (${pct}%)`;
-          if (p.current_slug) info += ` - ${p.current_slug}`;
-          if (p.updated) info += ` | ${p.updated} aktualisiert`;
-          if (p.skipped_finished) info += ` | ${p.skipped_finished} übersprungen`;
-          resultEl.innerHTML = `⏳ ${bar} ${info}`;
+          let detail = `${p.checked} / ${p.total}`;
+          if (p.current_slug) detail += ` - ${p.current_slug}`;
+          if (p.updated) detail += ` | ${p.updated} aktualisiert`;
+          if (p.skipped_finished) detail += ` | ${p.skipped_finished} übersprungen`;
+          progressEl.innerHTML = renderProgressBar(pct, label, detail);
         } else {
-          resultEl.textContent = '⏳ Scrape läuft...';
+          progressEl.innerHTML = renderProgressBar(0, label, 'Starte...');
         }
         return;
       }
       clearInterval(poll);
       btn.disabled = false;
+      progressEl.innerHTML = '';
       if (!data.result) { resultEl.textContent = ''; return; }
       const res = data.result;
       if (res.error) {
@@ -1707,36 +1687,6 @@ async function pollSyncStatus(mode, resultEl, btn) {
       }
     } catch(e) { /* keep polling */ }
   }, 3000);
-}
-
-async function detailBatch() {
-  const btn = document.getElementById('btn-detail-batch');
-  btn.disabled = true;
-  document.getElementById('detail-result').textContent = 'Batch Detail-Scrape wird gestartet...';
-  try {
-    const r = await fetch(API + '/api/dashboard/detail-scrape/batch', {method:'POST'});
-    if (!r.ok) { const e = await r.json(); toast(e.detail, false); return; }
-    const data = await r.json();
-    toast('Batch Detail-Scrape gestartet!');
-    document.getElementById('detail-result').innerHTML =
-      `✅ Gestartet (Batch-Größe: ${data.batchSize || '?'})`;
-    fetchStatus();
-  } catch(e) { toast('Fehler: ' + e, false); }
-  finally { btn.disabled = false; }
-}
-
-async function detailSingle() {
-  const slug = document.getElementById('detail-slug').value.trim();
-  if (!slug) { toast('Bitte einen Slug eingeben!', false); return; }
-  document.getElementById('detail-result').textContent = `Scrape "${slug}"...`;
-  try {
-    const r = await fetch(API + '/api/dashboard/detail-scrape/' + encodeURIComponent(slug), {method:'POST'});
-    const data = await r.json();
-    if (!r.ok) { toast(data.detail || data.error || 'Fehler', false); document.getElementById('detail-result').textContent = '❌ ' + (data.detail || data.error); return; }
-    toast(`${data.title || slug} gescraped!`);
-    document.getElementById('detail-result').innerHTML =
-      `✅ <strong>${data.title || slug}</strong> erfolgreich gescraped`;
-  } catch(e) { toast('Fehler: ' + e, false); document.getElementById('detail-result').textContent = '❌ ' + e; }
 }
 
 async function logout() {
