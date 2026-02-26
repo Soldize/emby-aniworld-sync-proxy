@@ -170,13 +170,35 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] /stream/active Monitoring Endpoint
 - [x] httpx async HTTP Client
 
+#### Cloudflare WARP Proxy ✅
+- [x] SOCKS5 Proxy-Support in api_server.py (requests) + proxy.py (httpx)
+- [x] Playwright mit Proxy-Arg für VOE Headless-Browser
+- [x] Config: `[proxy] warp_socks5 = socks5://127.0.0.1:40000`
+- [x] Env-Variable `WARP_PROXY` als Alternative
+- [x] requirements.txt: `requests[socks]` + `httpx[socks]`
+- [x] Installer: WARP Installation + Konfiguration (Proxy-Modus, MASQUE)
+- [x] Installer: Menüpunkt 9 (WARP installieren/verbinden/Status)
+- [x] Installer: Self-Update, Versionsanzeige im Header
+- [x] Dashboard: WARP Status-Karte (online/offline + Cloudflare-IP)
+- [x] Dashboard: Hoster Health Live-Check (Online/Offline statt Cache-Ratio)
+
 #### Sonstiges
 - [x] GitHub Release erstellen (v1.0.0)
 
 ### 🐛 Bugfixes
+
+#### 2026-02-25: VOE Regex + WARP
+- [x] VOE `_extract_voe()` matched JWPlayer Tracking-GIF statt echte m3u8 URL
+- [x] Fix: `finditer` statt `search` + Blacklist für `/jwplayer`, `.gif?`
+- [x] WARP `--accept-tos` bei allen warp-cli Aufrufen (root braucht ToS-Accept)
+- [x] ifconfig.me: `/ip` Endpoint + `Accept: text/plain` Header (statt HTML-Seite)
 
 #### 2026-02-23: extract_video_url + Playwright/Chromium
 - [x] `extract_video_url()` Funktionsdefinition fehlte (`def` Statement nicht vorhanden)
 - [x] X11-Libs für Headless Chromium fehlten auf Emby-Server (libXfixes, libcairo2, etc.)
 - [x] Playwright/Chromium war nur für root installiert, nicht für User `emby` (Service läuft als emby)
 - [x] stream_cache failed_at Marks gecleert die sich durch den Bug angesammelt hatten
+
+### 🔨 Offen
+- [ ] Filemoon: Playwright-Fallback einbauen (SPA, Regex-Extraktion funktioniert nicht)
+- [ ] Vidmoly über WARP testen (Datacenter-IP Blocking)

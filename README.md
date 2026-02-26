@@ -12,6 +12,7 @@ Anime-Streaming von aniworld.to in Emby - als native TV-Show Library.
 - **API Server:** Scrapt aniworld.to, cached Episoden + Stream-URLs
 - **Metadata Server:** AniList/MAL/AniDB Metadata, Cover-Bilder, Genres, Ratings
 - **Stream Proxy:** HLS-Streams werden durch den Proxy geleitet (Retry bei fehlenden Segmenten, kein Bild/Ton Desync)
+- **WARP Proxy:** Optional Cloudflare WARP als SOCKS5 Proxy (umgeht Datacenter-IP-Blocking bei Hostern wie Vidmoly)
 - **Sync Service:** Erstellt .strm/.nfo Dateien für Emby Library
 - **Standalone Installer:** Eine Datei, interaktives Menü, Auto-Update von GitHub
 - **Kein Plugin nötig:** Alles über Standard-Emby-Bibliothek
@@ -42,8 +43,9 @@ Der Installer bietet ein interaktives Menü:
 6. **Passwort zurücksetzen**
 7. **Backup erstellen** - DB + Config als ZIP
 8. **Restore** - Backup-ZIP wiederherstellen
-9. **Deinstallieren**
-10. **Anleitung** - Schritt-für-Schritt Ersteinrichtung
+9. **WARP Proxy** - Cloudflare WARP installieren/verbinden/Status
+10. **Deinstallieren**
+11. **Anleitung** - Schritt-für-Schritt Ersteinrichtung
 
 Nach der Installation prüft das Script automatisch ob alle Services laufen.
 
@@ -150,7 +152,7 @@ Die Config (`/etc/aniworld/config.ini`) enthält folgende Sektionen:
 | `[api]` | API Server Port, DB-Pfad |
 | `[metadata]` | Metadata Server Port, DB-Pfad, Covers |
 | `[anidb]` | AniDB Client Name + Version (optional, für Episodentitel) |
-| `[proxy]` | Proxy/Dashboard Port |
+| `[proxy]` | Proxy/Dashboard Port, WARP SOCKS5 Proxy (optional) |
 | `[sync]` | Media-Pfad für .strm/.nfo |
 | `[preferences]` | Sprache, Hoster-Präferenz |
 | `[emby]` | Emby URL + API-Key für Auto Library Scan (optional) |
