@@ -845,6 +845,157 @@ async def full_sync_status():
     except Exception:
         return {"running": False, "result": None}
 
+# === Nightly Sync Chain ===
+_nightly_status = {
+    "running": False,
+    "step": 0,          # 0=idle, 1=incremental, 2=metadata, 3=strm, 4=emby
+    "step_name": "",
+    "steps_total": 4,
+    "step_progress": None,  # sub-progress from current step
+    "results": [],
+    "error": None,
+    "started_at": None,
+    "finished_at": None,
+}
+_nightly_lock = threading.Lock()
+
+
+def _nightly_chain():
+    """Run all 4 steps sequentially in background thread."""
+    global _nightly_status
+    steps = [
+        (1, "Änderungen scrapen", _nightly_incremental),
+        (2, "Metadata aktualisieren", _nightly_metadata),
+        (3, "STRM-Sync", _nightly_strm),
+        (4, "Emby Library Scan", _nightly_emby_scan),
+    ]
+    _nightly_status["results"] = []
+    _nightly_status["error"] = None
+
+    for num, name, fn in steps:
+        _nightly_status["step"] = num
+        _nightly_status["step_name"] = name
+        _nightly_status["step_progress"] = None
+        try:
+            result = fn()
+            _nightly_status["results"].append({"step": num, "name": name, "ok": True, "detail": result})
+        except Exception as e:
+            log.error(f"Nightly step {num} ({name}) failed: {e}")
+            _nightly_status["results"].append({"step": num, "name": name, "ok": False, "detail": str(e)})
+            # Continue with next step despite error
+
+    _nightly_status["running"] = False
+    _nightly_status["finished_at"] = datetime.now().isoformat()
+    _nightly_status["step"] = 0
+    _nightly_status["step_name"] = "Fertig"
+
+
+def _nightly_incremental():
+    """Step 1: Incremental scrape and poll until done."""
+    r = requests.post(f"{API_BASE}/api/sync/incremental", timeout=10)
+    if not r.ok:
+        raise Exception(f"HTTP {r.status_code}: {r.text}")
+    # Poll until done
+    while True:
+        time.sleep(3)
+        sr = requests.get(f"{API_BASE}/api/sync/incremental/status", timeout=5)
+        if not sr.ok:
+            break
+        data = sr.json()
+        _nightly_status["step_progress"] = data.get("progress")
+        if not data.get("running"):
+            res = data.get("result", {})
+            if res and res.get("error"):
+                raise Exception(res["error"])
+            return res
+    return None
+
+
+def _nightly_metadata():
+    """Step 2: Metadata sync and poll until done."""
+    r = requests.post(f"{META_BASE}/sync", timeout=10)
+    if not r.ok:
+        raise Exception(f"HTTP {r.status_code}: {r.text}")
+    # Poll until done
+    while True:
+        time.sleep(3)
+        sr = requests.get(f"{META_BASE}/status", timeout=5)
+        if not sr.ok:
+            break
+        data = sr.json()
+        _nightly_status["step_progress"] = data.get("syncProgress")
+        if not data.get("syncRunning"):
+            return {"total": data.get("total_metadata", 0), "covers": data.get("covers_cached", 0)}
+    return None
+
+
+def _nightly_strm():
+    """Step 3: STRM sync - start sync.py and wait."""
+    global sync_process, sync_log, sync_start_time, sync_end_time, sync_exit_code
+    if sync_process and sync_process.poll() is None:
+        raise Exception("STRM-Sync läuft bereits")
+    sync_log.clear()
+    sync_start_time = datetime.now().isoformat()
+    sync_end_time = None
+    sync_exit_code = None
+    sync_process = subprocess.Popen(
+        [sys.executable, SYNC_SCRIPT],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+        env={**os.environ, "ANIWORLD_CONFIG": CONFIG_PATH}
+    )
+    threading.Thread(target=_read_sync_output, daemon=True).start()
+    # Wait for completion
+    sync_process.wait()
+    sync_exit_code = sync_process.returncode
+    sync_end_time = datetime.now().isoformat()
+    if sync_exit_code != 0:
+        raise Exception(f"STRM-Sync Exit Code {sync_exit_code}")
+    return {"exit_code": 0}
+
+
+def _nightly_emby_scan():
+    """Step 4: Trigger Emby Library Scan."""
+    emby_url = config.get("emby", "url", fallback=None)
+    emby_key = config.get("emby", "api_key", fallback=None)
+    if not emby_url or not emby_key:
+        return "übersprungen (keine Emby-Config)"
+    try:
+        resp = requests.post(
+            f"{emby_url}/emby/Library/Refresh",
+            headers={"X-Emby-Token": emby_key},
+            timeout=10
+        )
+        if resp.ok:
+            return "gestartet"
+        raise Exception(f"HTTP {resp.status_code}")
+    except requests.ConnectionError as e:
+        raise Exception(f"Emby nicht erreichbar: {e}")
+
+
+@app.post("/api/dashboard/nightly-sync")
+async def nightly_sync_start():
+    """Nightly Sync Chain starten (alle 4 Schritte)."""
+    if _nightly_status["running"]:
+        raise HTTPException(status_code=409, detail="Nightly Sync läuft bereits")
+    _nightly_status["running"] = True
+    _nightly_status["started_at"] = datetime.now().isoformat()
+    _nightly_status["finished_at"] = None
+    _nightly_status["step"] = 0
+    _nightly_status["step_name"] = "Starte..."
+    _nightly_status["results"] = []
+    _nightly_status["error"] = None
+    _nightly_status["step_progress"] = None
+    threading.Thread(target=_nightly_chain, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.get("/api/dashboard/nightly-sync/status")
+async def nightly_sync_status():
+    """Status des Nightly Sync Chain."""
+    return dict(_nightly_status)
+
+
 @app.get("/api/dashboard/backup")
 async def create_backup(request: Request):
     """Create backup ZIP of DB + Config."""
@@ -1241,6 +1392,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <!-- Tab: Dashboard -->
 <div id="tab-dashboard">
 
+<!-- Nightly Sync -->
+<div class="section" id="nightly-section">
+  <h2>🌙 Nightly Sync</h2>
+  <div class="btn-group" style="align-items:center; flex-wrap:wrap; gap:8px;">
+    <button class="btn btn-start" id="btn-nightly" onclick="nightlySync()" style="background:var(--accent); color:#fff;">🚀 Nightly Sync starten</button>
+    <span style="color:var(--muted); font-size:0.85rem;">Incremental Scrape → Metadata → STRM-Sync → Emby Scan</span>
+  </div>
+  <div id="nightly-progress" style="margin-top:12px;"></div>
+  <div id="nightly-result" style="margin-top:6px; font-size:0.85rem; color:var(--muted);"></div>
+</div>
+
 <!-- Status Cards -->
 <div class="grid" id="status-grid"></div>
 
@@ -1467,6 +1629,9 @@ function renderStatus(data) {
     if (strmBtn) strmBtn.disabled = true;
   }
 
+  // Check nightly status on load
+  checkNightlyOnLoad();
+
   // Metadata Sync Status
   const metaDetail = data.metadata && data.metadata.detail;
   const metaBox = document.getElementById('meta-status');
@@ -1544,6 +1709,109 @@ function renderProgressBar(pct, label, detail) {
       </div>
       ${detail ? `<div style="margin-top:6px; font-size:0.8rem; color:var(--muted);">${detail}</div>` : ''}
     </div>`;
+}
+
+let _nightlyPolling = false;
+async function checkNightlyOnLoad() {
+  if (_nightlyPolling) return;
+  try {
+    const r = await fetch(API + '/api/dashboard/nightly-sync/status');
+    const data = await r.json();
+    if (data.running) {
+      _nightlyPolling = true;
+      document.getElementById('btn-nightly').disabled = true;
+      pollNightlySync(
+        document.getElementById('nightly-progress'),
+        document.getElementById('nightly-result'),
+        document.getElementById('btn-nightly')
+      );
+    }
+  } catch(e) {}
+}
+
+async function nightlySync() {
+  const btn = document.getElementById('btn-nightly');
+  const progressEl = document.getElementById('nightly-progress');
+  const resultEl = document.getElementById('nightly-result');
+  btn.disabled = true;
+  resultEl.textContent = '';
+  progressEl.innerHTML = '';
+  try {
+    const r = await fetch(API + '/api/dashboard/nightly-sync', {method:'POST'});
+    if (!r.ok) {
+      if (r.status === 409) { toast('Nightly Sync läuft bereits!', false); btn.disabled = false; return; }
+      const e = await r.json(); toast(e.detail, false); btn.disabled = false; return;
+    }
+    toast('Nightly Sync gestartet!');
+    pollNightlySync(progressEl, resultEl, btn);
+  } catch(e) { toast('Fehler: ' + e, false); btn.disabled = false; }
+}
+
+function pollNightlySync(progressEl, resultEl, btn) {
+  const stepNames = ['', 'Änderungen scrapen', 'Metadata aktualisieren', 'STRM-Sync', 'Emby Library Scan'];
+  const stepIcons = ['', '🔍', '📚', '📁', '📡'];
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch(API + '/api/dashboard/nightly-sync/status');
+      const data = await r.json();
+      if (data.running) {
+        const step = data.step || 0;
+        const total = data.steps_total || 4;
+        const basePct = Math.round(((step - 1) / total) * 100);
+        let stepPct = 0;
+        const sp = data.step_progress;
+        if (sp && sp.total && sp.checked) stepPct = Math.round((sp.checked / sp.total) * 100);
+        else if (sp && sp.total && sp.done) stepPct = Math.round((sp.done / sp.total) * 100);
+        const overallPct = Math.min(Math.round(basePct + (stepPct / total)), 99);
+
+        // Build step indicators
+        let stepsHtml = '<div style="display:flex; gap:6px; margin-top:10px; flex-wrap:wrap;">';
+        for (let i = 1; i <= total; i++) {
+          const done = data.results && data.results.find(r => r.step === i);
+          let bg = 'var(--border)'; let fg = 'var(--muted)';
+          if (done) { bg = done.ok ? 'var(--green)' : 'var(--red)'; fg = '#000'; }
+          else if (i === step) { bg = 'var(--accent)'; fg = '#fff'; }
+          stepsHtml += `<div style="padding:4px 10px; border-radius:4px; background:${bg}; color:${fg}; font-size:0.8rem; font-weight:600;">
+            ${stepIcons[i]} ${stepNames[i]}${i === step ? '...' : ''}</div>`;
+        }
+        stepsHtml += '</div>';
+
+        progressEl.innerHTML = `
+          <div style="padding:12px 16px; background:var(--surface); border:1px solid var(--border); border-radius:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span>🌙 <strong>Schritt ${step}/${total}:</strong> ${data.step_name || stepNames[step]}</span>
+              <span style="color:var(--accent); font-weight:600;">${overallPct}%</span>
+            </div>
+            <div style="background:var(--border); border-radius:4px; height:8px; overflow:hidden;">
+              <div style="background:var(--accent); height:100%; width:${overallPct}%; transition:width 0.5s;"></div>
+            </div>
+            ${stepsHtml}
+          </div>`;
+        return;
+      }
+      // Finished
+      clearInterval(poll);
+      btn.disabled = false;
+      progressEl.innerHTML = '';
+      if (data.results && data.results.length > 0) {
+        const allOk = data.results.every(r => r.ok);
+        let html = allOk ? '✅ <strong>Nightly Sync abgeschlossen!</strong>' : '⚠️ <strong>Nightly Sync mit Fehlern</strong>';
+        html += '<div style="margin-top:8px;">';
+        for (const r of data.results) {
+          const icon = r.ok ? '✅' : '❌';
+          let detail = '';
+          if (typeof r.detail === 'string') detail = r.detail;
+          else if (r.detail && r.detail.new_anime !== undefined) detail = `${r.detail.new_anime} neu, ${r.detail.updated_anime || 0} aktualisiert`;
+          else if (r.detail && r.detail.total !== undefined) detail = `${r.detail.total} Anime, ${r.detail.covers} Cover`;
+          else if (r.detail && r.detail.exit_code === 0) detail = 'OK';
+          html += `<div style="margin:2px 0;">${icon} ${r.name}${detail ? ' - ' + detail : ''}</div>`;
+        }
+        html += '</div>';
+        resultEl.innerHTML = html;
+        toast(allOk ? 'Nightly Sync erfolgreich!' : 'Nightly Sync mit Fehlern', allOk);
+      }
+    } catch(e) { /* keep polling */ }
+  }, 3000);
 }
 
 function pollStrmSync(progressEl, resultEl, btn) {
