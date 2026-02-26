@@ -52,8 +52,17 @@ ANIDB_CLIENT_VER = _cfg.getint("anidb", "client_version", fallback=int(os.enviro
 ANIDB_API_URL = "http://api.anidb.net:9001/httpapi"
 ANIDB_TITLES_URL = "http://anidb.net/api/anime-titles.xml.gz"
 ANIDB_TITLES_PATH = _cfg.get("metadata", "anidb_titles_path", fallback="/opt/aniworld/data/anidb-titles.xml.gz")
-ANIDB_DELAY = 4.0  # seconds between API requests (AniDB min: 2s, 4s to avoid bans)
+ANIDB_DELAY = 8.0  # seconds between API requests (AniDB min: 2s, 8s for datacenter IPs)
 ANIDB_NIGHTLY_HOUR_UTC = 4  # run AniDB sync 1h after AniList sync
+
+# SOCKS5 proxy support (e.g. Cloudflare WARP in proxy mode)
+WARP_PROXY = os.environ.get("WARP_PROXY", "").strip()
+if not WARP_PROXY:
+    WARP_PROXY = _cfg.get("proxy", "warp_socks5", fallback="").strip()
+if WARP_PROXY:
+    _PROXIES = {"http": WARP_PROXY, "https": WARP_PROXY}
+else:
+    _PROXIES = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -403,7 +412,7 @@ def download_anidb_titles() -> bool:
             return True  # fresh enough
     log.info("Downloading AniDB anime-titles.xml.gz...")
     try:
-        resp = requests.get(ANIDB_TITLES_URL, headers=ANIDB_HEADERS, timeout=60)
+        resp = requests.get(ANIDB_TITLES_URL, headers=ANIDB_HEADERS, timeout=60, proxies=_PROXIES)
         resp.raise_for_status()
         path.write_bytes(resp.content)
         log.info("AniDB titles downloaded (%d bytes)", len(resp.content))
@@ -507,15 +516,14 @@ def fetch_anidb_anime(anidb_id: int) -> dict | None:
         f"&protover=1&aid={anidb_id}"
     )
     try:
-        resp = requests.get(url, headers=ANIDB_HEADERS, timeout=30)
+        resp = requests.get(url, headers=ANIDB_HEADERS, timeout=30, proxies=_PROXIES)
     except Exception as e:
         log.error("AniDB request failed, aid=%s: %s", anidb_id, e)
         return None
 
     if resp.status_code == 503:
-        log.warning("AniDB 503 (banned/flood protection), aid=%s — sleeping 30s", anidb_id)
-        time.sleep(30)
-        return None
+        log.warning("AniDB 503 (banned/flood protection), aid=%s — aborting sync", anidb_id)
+        return "BANNED"
     if not resp.ok:
         log.warning("AniDB HTTP %s, aid=%s", resp.status_code, anidb_id)
         return None
@@ -537,8 +545,8 @@ def fetch_anidb_anime(anidb_id: int) -> dict | None:
     if root.tag == "error":
         err_text = root.text or ""
         if "banned" in err_text.lower():
-            log.warning("AniDB banned for aid=%s — sleeping 30s", anidb_id)
-            time.sleep(30)
+            log.warning("AniDB banned for aid=%s — aborting sync", anidb_id)
+            return "BANNED"
         else:
             log.warning("AniDB error for aid=%s: %s", anidb_id, err_text)
         return None
@@ -673,6 +681,10 @@ def sync_anidb_episodes():
         time.sleep(ANIDB_DELAY)
 
         data = fetch_anidb_anime(anidb_id)
+        if data == "BANNED":
+            log.error("AniDB ban detected — stopping episode sync. Will retry next nightly run.")
+            errors += 1
+            break
         if not data:
             errors += 1
             continue
