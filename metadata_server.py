@@ -383,6 +383,38 @@ def fetch_and_store_metadata(slug: str, title: str, conn: sqlite3.Connection) ->
         log.info("Stored Jikan metadata for %s (mal_id=%s)", slug, jk.get("mal_id"))
         return True
 
+    # Fallback 2: AniDB
+    if ANIDB_CLIENT != "REGISTER_PENDING":
+        anidb_id = find_anidb_id(slug, title, None)
+        if anidb_id:
+            log.info("AniList+Jikan failed, trying AniDB for %s (aid=%s)", slug, anidb_id)
+            time.sleep(ANIDB_DELAY)
+            data = fetch_anidb_anime(anidb_id)
+            if data and data != "BANNED":
+                conn.execute("""
+                    INSERT OR REPLACE INTO metadata
+                    (slug, anilist_id, mal_id, anidb_id, title_romaji, title_english, title_native,
+                     description_en, description_de, genres, tags, rating,
+                     cover_url_original, cover_cached, banner_url, status, title_de, last_updated)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    slug,
+                    None, None, anidb_id,
+                    title, title, None,  # use aniworld title as romaji+english fallback
+                    data.get("description"),  # AniDB description (often German)
+                    data.get("description"),
+                    json.dumps([]),  # no genres from AniDB API
+                    json.dumps([]),
+                    None,  # no rating
+                    None, 0, None,  # no cover
+                    None,  # unknown status
+                    data.get("title_de"),
+                    datetime.now(timezone.utc).isoformat(),
+                ))
+                conn.commit()
+                log.info("Stored AniDB metadata for %s (aid=%s, title_de=%s)", slug, anidb_id, data.get("title_de"))
+                return True
+
     log.warning("No metadata found for %s (%s)", slug, title)
     return False
 
