@@ -660,6 +660,7 @@ def _extract_voe(url, html):
 _pw_instance = None      # playwright context manager
 _pw_browser = None       # persistent browser instance
 _pw_lock = threading.Lock()
+_pw_extract_lock = threading.Lock()  # serialize all Playwright extractions (greenlet is not thread-safe)
 _pw_last_used = 0.0
 _PW_IDLE_TIMEOUT = 300   # close browser after 5min idle
 
@@ -727,7 +728,13 @@ threading.Thread(target=_pw_idle_checker, daemon=True).start()
 def _extract_stream_playwright(url, hoster_name="unknown"):
     """Extract stream URL using the persistent browser pool.
     Works for all hosters (VOE, Filemoon, Vidmoly, etc.).
-    Uses network request interception for instant URL capture."""
+    Uses network request interception for instant URL capture.
+    Serialized via lock - Playwright sync API is not thread-safe (greenlet)."""
+    with _pw_extract_lock:
+        return _extract_stream_playwright_inner(url, hoster_name)
+
+
+def _extract_stream_playwright_inner(url, hoster_name):
     browser = _get_playwright_browser()
     if not browser:
         return None
