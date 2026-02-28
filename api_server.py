@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 def _parse_dt(s):
     """Parse ISO datetime string, assume UTC if naive."""
-    dt = _parse_dt(s)
+    dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
