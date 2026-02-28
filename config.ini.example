@@ -15,6 +15,8 @@ anidb_titles_path = /opt/aniworld/data/anidb-titles.xml.gz
 [proxy]
 # Stream Proxy (für .strm Redirect)
 port = 5081
+# Segment Pre-Fetch Buffer (Anzahl Segmente die vorgeladen werden, 0 = deaktiviert)
+prefetch_segments = 5
 
 [sync]
 # Pfad für .strm/.nfo Dateien (Emby Library zeigt hierhin)

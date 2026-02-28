@@ -208,6 +208,14 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] ANIDB_DELAY 8s (Datacenter-safe)
 - [x] Ban-Erkennung: Sync bricht sofort ab statt endlos zu loopen
 
+#### Segment Pre-Fetch Buffer ✅
+- [x] Sliding Window Pre-Fetch: beim Segment-Request werden die nächsten N Segmente im Hintergrund geladen
+- [x] Cache im RAM mit TTL (120s), automatisches Cleanup
+- [x] Konfigurierbar: `[proxy] prefetch_segments = 5` (default 5, 0 = deaktiviert)
+- [x] Cache HIT = instant Response, kein Warten beim Play-Start
+- [x] Segment-Order aus m3u8 Playlist extrahiert
+- [x] Thread-safe mit Locks, verhindert doppeltes Fetchen
+
 ### 🔨 Offen
 - [ ] Filemoon: Playwright-Fallback einbauen (SPA, Regex-Extraktion funktioniert nicht)
 - [ ] Vidmoly über WARP testen (Datacenter-IP Blocking)

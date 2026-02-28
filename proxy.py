@@ -56,11 +56,101 @@ STREAM_SESSION_TTL = 14400  # 4 hours - stream sessions expire after this
 SEGMENT_RETRY_COUNT = 3     # retry failed segment fetches
 SEGMENT_RETRY_DELAY = 0.5   # seconds between retries
 SEGMENT_TIMEOUT = 30        # seconds per segment fetch
+PREFETCH_AHEAD = config.getint("proxy", "prefetch_segments", fallback=5)  # segments to pre-fetch ahead
+PREFETCH_TTL = 120          # seconds to keep cached segments
 HTTPX_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 # Stream session storage: session_id -> {base_url, stream_url, created, slug, season, episode}
 _stream_sessions = {}
 _stream_sessions_lock = threading.Lock()
+
+# Segment pre-fetch cache: url -> {"data": bytes, "content_type": str, "ts": float}
+_segment_cache = {}
+_segment_cache_lock = threading.Lock()
+# Segment order per session: session_id -> [url1, url2, ...] (ordered from m3u8)
+_segment_order = {}
+_segment_order_lock = threading.Lock()
+# Track which URLs are currently being pre-fetched
+_prefetch_in_progress = set()
+_prefetch_lock = threading.Lock()
+
+
+def _cache_segment(url, data, content_type):
+    """Store a segment in the pre-fetch cache."""
+    with _segment_cache_lock:
+        _segment_cache[url] = {"data": data, "content_type": content_type, "ts": time.time()}
+        # Cleanup expired entries
+        now = time.time()
+        expired = [k for k, v in _segment_cache.items() if now - v["ts"] > PREFETCH_TTL]
+        for k in expired:
+            del _segment_cache[k]
+
+
+def _get_cached_segment(url):
+    """Get a segment from cache, None if not cached or expired."""
+    with _segment_cache_lock:
+        entry = _segment_cache.get(url)
+        if not entry:
+            return None
+        if time.time() - entry["ts"] > PREFETCH_TTL:
+            del _segment_cache[url]
+            return None
+        return entry
+
+
+def _register_segments(session_id, segment_urls):
+    """Register the ordered segment list for a session (from m3u8 parsing)."""
+    with _segment_order_lock:
+        existing = _segment_order.get(session_id, [])
+        # Merge - add new URLs not already tracked
+        seen = set(existing)
+        for u in segment_urls:
+            if u not in seen:
+                existing.append(u)
+                seen.add(u)
+        _segment_order[session_id] = existing
+
+
+def _get_next_segments(session_id, current_url, count):
+    """Get the next N segment URLs after current_url for pre-fetching."""
+    with _segment_order_lock:
+        segments = _segment_order.get(session_id, [])
+    try:
+        idx = segments.index(current_url)
+        return segments[idx + 1: idx + 1 + count]
+    except ValueError:
+        return []
+
+
+def _prefetch_segments(session_id, current_url):
+    """Background pre-fetch of next segments after current_url."""
+    next_urls = _get_next_segments(session_id, current_url, PREFETCH_AHEAD)
+    if not next_urls:
+        return
+
+    def _do_prefetch(urls):
+        for url in urls:
+            # Skip if already cached or in progress
+            if _get_cached_segment(url):
+                continue
+            with _prefetch_lock:
+                if url in _prefetch_in_progress:
+                    continue
+                _prefetch_in_progress.add(url)
+            try:
+                r = requests.get(url, timeout=SEGMENT_TIMEOUT, proxies=(
+                    {"http": WARP_PROXY, "https": WARP_PROXY} if WARP_PROXY else None
+                ))
+                if r.ok:
+                    ct = r.headers.get("content-type", "video/mp2t")
+                    _cache_segment(url, r.content, ct)
+            except Exception as e:
+                log.debug(f"Prefetch failed for {url[:60]}...: {e}")
+            finally:
+                with _prefetch_lock:
+                    _prefetch_in_progress.discard(url)
+
+    threading.Thread(target=_do_prefetch, args=(next_urls,), daemon=True).start()
 
 
 def _create_stream_session(base_url, stream_url, slug, season, episode):
@@ -80,6 +170,8 @@ def _create_stream_session(base_url, stream_url, slug, season, episode):
         expired = [k for k, v in _stream_sessions.items() if now - v["created"] > STREAM_SESSION_TTL]
         for k in expired:
             del _stream_sessions[k]
+            with _segment_order_lock:
+                _segment_order.pop(k, None)
     return session_id
 
 
@@ -96,9 +188,11 @@ def _get_stream_session(session_id):
 
 
 def _rewrite_m3u8(content, base_url, session_id, proxy_base):
-    """Rewrite m3u8 playlist URLs to point through our proxy."""
+    """Rewrite m3u8 playlist URLs to point through our proxy.
+    Also registers segment URLs for pre-fetching."""
     lines = content.split('\n')
     result = []
+    segment_urls = []  # collect original segment URLs for pre-fetch ordering
     for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith('#'):
@@ -122,6 +216,12 @@ def _rewrite_m3u8(content, base_url, session_id, proxy_base):
                 full_url = urljoin(base_url, stripped)
             encoded = quote(full_url, safe='')
             result.append(f'{proxy_base}/stream/{session_id}/proxy?url={encoded}')
+            # Track segment URLs (not sub-playlists)
+            if '.ts' in full_url or '.m4s' in full_url or not '.m3u8' in full_url:
+                segment_urls.append(full_url)
+    # Register segment order for this session
+    if segment_urls:
+        _register_segments(session_id, segment_urls)
     return '\n'.join(result)
 
 
@@ -441,7 +541,7 @@ async def play(request: Request, slug: str, season: int, episode: int):
 
 @app.get("/stream/{session_id}/proxy")
 async def stream_proxy(request: Request, session_id: str, url: str):
-    """Proxy HLS playlists and segments with retry logic."""
+    """Proxy HLS playlists and segments with retry logic + pre-fetch buffer."""
     session = _get_stream_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Stream session expired or not found")
@@ -451,15 +551,14 @@ async def stream_proxy(request: Request, session_id: str, url: str):
     is_playlist = '.m3u8' in parsed.path
     proxy_base = f"{request.url.scheme}://{request.url.netloc}"
 
-    async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, follow_redirects=True, proxy=WARP_PROXY or None) as client:
-        last_error = None
-        for attempt in range(1, SEGMENT_RETRY_COUNT + 1):
-            try:
-                if is_playlist:
-                    # Fetch and rewrite sub-playlist
+    if is_playlist:
+        # Fetch and rewrite sub-playlist
+        async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, follow_redirects=True, proxy=WARP_PROXY or None) as client:
+            last_error = None
+            for attempt in range(1, SEGMENT_RETRY_COUNT + 1):
+                try:
                     r = await client.get(url)
                     r.raise_for_status()
-                    # Base URL for this sub-playlist
                     sub_base = url.rsplit('/', 1)[0] + '/' if '/' in urlparse(url).path else session["base_url"]
                     rewritten = _rewrite_m3u8(r.text, sub_base, session_id, proxy_base)
                     return Response(
@@ -470,14 +569,41 @@ async def stream_proxy(request: Request, session_id: str, url: str):
                             "Cache-Control": "no-cache",
                         }
                     )
-                else:
-                    # Stream segment through with chunked transfer
+                except (httpx.HTTPError, httpx.StreamError) as e:
+                    last_error = e
+                    if attempt < SEGMENT_RETRY_COUNT:
+                        log.warning(f"Stream proxy retry {attempt}/{SEGMENT_RETRY_COUNT} for {url[:80]}...: {e}")
+                        await asyncio.sleep(SEGMENT_RETRY_DELAY * attempt)
+            log.error(f"Stream proxy failed after {SEGMENT_RETRY_COUNT} retries: {url[:80]}... - {last_error}")
+            raise HTTPException(status_code=502, detail="Failed to fetch stream playlist")
+    else:
+        # Segment request - check pre-fetch cache first
+        cached = _get_cached_segment(url)
+        if cached:
+            log.debug(f"Segment cache HIT: {url[:60]}...")
+            # Trigger pre-fetch of next segments (sliding window)
+            _prefetch_segments(session_id, url)
+            return Response(
+                content=cached["data"],
+                media_type=cached["content_type"],
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "max-age=86400",
+                }
+            )
+
+        # Cache miss - fetch normally with retry
+        async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT, follow_redirects=True, proxy=WARP_PROXY or None) as client:
+            last_error = None
+            for attempt in range(1, SEGMENT_RETRY_COUNT + 1):
+                try:
                     r = await client.get(url)
                     r.raise_for_status()
-
-                    # Determine content type
                     content_type = r.headers.get("content-type", "video/mp2t")
-
+                    # Cache this segment too (in case of re-request)
+                    _cache_segment(url, r.content, content_type)
+                    # Trigger pre-fetch of next segments
+                    _prefetch_segments(session_id, url)
                     return Response(
                         content=r.content,
                         media_type=content_type,
@@ -486,14 +612,14 @@ async def stream_proxy(request: Request, session_id: str, url: str):
                             "Cache-Control": "max-age=86400",
                         }
                     )
-            except (httpx.HTTPError, httpx.StreamError) as e:
-                last_error = e
-                if attempt < SEGMENT_RETRY_COUNT:
-                    log.warning(f"Stream proxy retry {attempt}/{SEGMENT_RETRY_COUNT} for {url[:80]}...: {e}")
-                    await asyncio.sleep(SEGMENT_RETRY_DELAY * attempt)
+                except (httpx.HTTPError, httpx.StreamError) as e:
+                    last_error = e
+                    if attempt < SEGMENT_RETRY_COUNT:
+                        log.warning(f"Stream proxy retry {attempt}/{SEGMENT_RETRY_COUNT} for {url[:80]}...: {e}")
+                        await asyncio.sleep(SEGMENT_RETRY_DELAY * attempt)
 
-        log.error(f"Stream proxy failed after {SEGMENT_RETRY_COUNT} retries: {url[:80]}... - {last_error}")
-        raise HTTPException(status_code=502, detail="Failed to fetch stream data")
+            log.error(f"Stream proxy failed after {SEGMENT_RETRY_COUNT} retries: {url[:80]}... - {last_error}")
+            raise HTTPException(status_code=502, detail="Failed to fetch stream data")
 
 
 @app.get("/stream/active")
