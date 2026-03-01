@@ -25,10 +25,12 @@ API_PORT = config.getint("api", "port", fallback=5080)
 META_PORT = config.getint("metadata", "port", fallback=5090)
 PROXY_PORT = config.getint("proxy", "port", fallback=5081)
 MEDIA_PATH = config.get("sync", "media_path", fallback="/media/aniworld")
+BASE_URL = config.get("proxy", "base_url", fallback="").strip().rstrip("/")
+STREAM_TOKEN = config.get("proxy", "stream_token", fallback="").strip()
 
 API_BASE = f"http://localhost:{API_PORT}"
 META_BASE = f"http://localhost:{META_PORT}"
-PROXY_BASE = f"http://localhost:{PROXY_PORT}"
+PROXY_BASE = BASE_URL if BASE_URL else f"http://localhost:{PROXY_PORT}"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -234,8 +236,9 @@ def write_episode_nfo(nfo_path, anime_name, season, episode, title=None, ep_meta
 
 
 def write_strm(strm_path, slug, season, episode):
-    """Write .strm file pointing to local proxy."""
-    url = f"{PROXY_BASE}/play/{slug}/{season}/{episode}"
+    """Write .strm file pointing to proxy (with optional stream token)."""
+    token_param = f"?token={STREAM_TOKEN}" if STREAM_TOKEN else ""
+    url = f"{PROXY_BASE}/play/{slug}/{season}/{episode}{token_param}"
     with open(strm_path, 'w', encoding='utf-8') as f:
         f.write(url + '\n')
 

@@ -40,8 +40,11 @@ config.read(CONFIG_PATH)
 API_PORT = config.getint("api", "port", fallback=5080)
 META_PORT = config.getint("metadata", "port", fallback=5090)
 PROXY_PORT = config.getint("proxy", "port", fallback=5081)
+DASHBOARD_PORT = config.getint("proxy", "dashboard_port", fallback=0)  # 0 = same as proxy
 PREF_LANGUAGE = config.get("preferences", "language", fallback="Deutsch")
 PREF_HOSTER = config.get("preferences", "hoster", fallback="VOE")
+BASE_URL = config.get("proxy", "base_url", fallback="").strip().rstrip("/")
+STREAM_TOKEN = config.get("proxy", "stream_token", fallback="").strip()
 
 API_BASE = f"http://localhost:{API_PORT}"
 META_BASE = f"http://localhost:{META_PORT}"
@@ -190,6 +193,7 @@ def _get_stream_session(session_id):
 def _rewrite_m3u8(content, base_url, session_id, proxy_base):
     """Rewrite m3u8 playlist URLs to point through our proxy.
     Also registers segment URLs for pre-fetching."""
+    token_param = f"&token={STREAM_TOKEN}" if STREAM_TOKEN else ""
     lines = content.split('\n')
     result = []
     segment_urls = []  # collect original segment URLs for pre-fetch ordering
@@ -205,7 +209,7 @@ def _rewrite_m3u8(content, base_url, session_id, proxy_base):
                     else:
                         full_url = urljoin(base_url, uri)
                         encoded = quote(full_url, safe='')
-                    return f'URI="{proxy_base}/stream/{session_id}/proxy?url={encoded}"'
+                    return f'URI="{proxy_base}/stream/{session_id}/proxy?url={encoded}{token_param}"'
                 stripped = re.sub(r'URI="([^"]+)"', rewrite_uri, stripped)
             result.append(stripped)
         else:
@@ -215,7 +219,7 @@ def _rewrite_m3u8(content, base_url, session_id, proxy_base):
             else:
                 full_url = urljoin(base_url, stripped)
             encoded = quote(full_url, safe='')
-            result.append(f'{proxy_base}/stream/{session_id}/proxy?url={encoded}')
+            result.append(f'{proxy_base}/stream/{session_id}/proxy?url={encoded}{token_param}')
             # Track segment URLs (not sub-playlists)
             if '.ts' in full_url or '.m4s' in full_url or not '.m3u8' in full_url:
                 segment_urls.append(full_url)
@@ -431,12 +435,23 @@ app = FastAPI(title="AniWorld Proxy", docs_url=None, redoc_url=None)
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Protect dashboard routes. /play/*, /health, /login, /api/auth/* are open."""
+    """Protect dashboard routes with session auth. Protect stream routes with token auth."""
     path = request.url.path
-    open_paths = ["/play/", "/stream/", "/health", "/login", "/api/auth/"]
-    if any(path.startswith(p) for p in open_paths):
+
+    # Stream token auth for /play/ and /stream/ endpoints
+    if path.startswith("/play/") or path.startswith("/stream/"):
+        if STREAM_TOKEN:
+            token = request.query_params.get("token", "")
+            if token != STREAM_TOKEN:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=403)
         return await call_next(request)
-    if path == "/" or path.startswith("/api/dashboard"):
+
+    # Open paths (no auth needed)
+    if path in ("/health",) or path.startswith("/login") or path.startswith("/api/auth/"):
+        return await call_next(request)
+
+    # Dashboard auth (session/cookie based)
+    if path == "/" or path.startswith("/api/dashboard") or path.startswith("/api/"):
         if not _check_auth(request):
             if path.startswith("/api/"):
                 return JSONResponse({"detail": "Nicht angemeldet"}, status_code=401)
@@ -516,7 +531,7 @@ async def play(request: Request, slug: str, season: int, episode: int):
     session_id = _create_stream_session(base_url, stream_url, slug, season, episode)
 
     # Determine proxy base URL (how clients reach us)
-    proxy_base = f"{request.url.scheme}://{request.url.netloc}"
+    proxy_base = BASE_URL if BASE_URL else f"{request.url.scheme}://{request.url.netloc}"
 
     log.info(f"HLS Proxy: {best.get('name')} ({best.get('language')}) -> session {session_id}")
 
@@ -549,7 +564,7 @@ async def stream_proxy(request: Request, session_id: str, url: str):
     # Determine if this is a playlist (.m3u8) or segment (.ts)
     parsed = urlparse(url)
     is_playlist = '.m3u8' in parsed.path
-    proxy_base = f"{request.url.scheme}://{request.url.netloc}"
+    proxy_base = BASE_URL if BASE_URL else f"{request.url.scheme}://{request.url.netloc}"
 
     if is_playlist:
         # Fetch and rewrite sub-playlist
@@ -2596,7 +2611,56 @@ async def dashboard():
 # ========================
 
 if __name__ == "__main__":
-    log.info(f"Starting AniWorld Proxy + Dashboard on port {PROXY_PORT}")
-    log.info(f"API Server: {API_BASE} | Metadata: {META_BASE}")
-    log.info(f"Dashboard: http://localhost:{PROXY_PORT}/")
-    uvicorn.run(app, host="0.0.0.0", port=PROXY_PORT, log_level="info")
+    if DASHBOARD_PORT and DASHBOARD_PORT != PROXY_PORT:
+        # Dual-port mode: proxy (public, 0.0.0.0) + dashboard (private, 127.0.0.1)
+        # Both use the same app, but the proxy port blocks dashboard access
+        from copy import copy
+
+        # Create a proxy-only app that rejects dashboard routes
+        proxy_app = FastAPI()
+
+        @proxy_app.middleware("http")
+        async def proxy_only_middleware(request: Request, call_next):
+            path = request.url.path
+            # Only allow stream endpoints + health on public port
+            if path.startswith("/play/") or path.startswith("/stream/") or path == "/health":
+                if STREAM_TOKEN:
+                    token = request.query_params.get("token", "")
+                    if token != STREAM_TOKEN:
+                        return JSONResponse({"detail": "Unauthorized"}, status_code=403)
+                return await call_next(request)
+            return JSONResponse({"detail": "Not found"}, status_code=404)
+
+        # Copy stream routes to proxy app
+        for route in app.routes:
+            path = getattr(route, 'path', '')
+            if '/play/' in path or '/stream/' in path or path == '/health':
+                proxy_app.routes.append(route)
+
+        log.info(f"Starting AniWorld Proxy on port {PROXY_PORT} (public, 0.0.0.0)")
+        log.info(f"Starting Dashboard on port {DASHBOARD_PORT} (private, 127.0.0.1)")
+        log.info(f"API Server: {API_BASE} | Metadata: {META_BASE}")
+        if BASE_URL:
+            log.info(f"Base URL: {BASE_URL}")
+        if STREAM_TOKEN:
+            log.info(f"Stream token auth: enabled")
+
+        # Run dashboard on localhost only (tunnel access)
+        dash_thread = threading.Thread(
+            target=uvicorn.run,
+            kwargs={"app": app, "host": "127.0.0.1", "port": DASHBOARD_PORT, "log_level": "info"},
+            daemon=True
+        )
+        dash_thread.start()
+        # Run proxy on all interfaces (public)
+        uvicorn.run(proxy_app, host="0.0.0.0", port=PROXY_PORT, log_level="info")
+    else:
+        # Single port mode (original behavior)
+        log.info(f"Starting AniWorld Proxy + Dashboard on port {PROXY_PORT}")
+        log.info(f"API Server: {API_BASE} | Metadata: {META_BASE}")
+        if BASE_URL:
+            log.info(f"Base URL: {BASE_URL}")
+        if STREAM_TOKEN:
+            log.info(f"Stream token auth: enabled")
+        log.info(f"Dashboard: http://localhost:{PROXY_PORT}/")
+        uvicorn.run(app, host="0.0.0.0", port=PROXY_PORT, log_level="info")

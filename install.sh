@@ -15,7 +15,7 @@ GITHUB_RAW="https://raw.githubusercontent.com/$GITHUB_REPO/main"
 GITHUB_API="https://api.github.com/repos/$GITHUB_REPO"
 VERSION_FILE="$INSTALL_DIR/.version"
 REQUIRED_FILES="api_server.py metadata_server.py proxy.py sync.py requirements.txt warp-health-check.sh"
-INSTALLER_VERSION="2026-03-01a"
+INSTALLER_VERSION="2026-03-01b"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
