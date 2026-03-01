@@ -64,6 +64,7 @@ if WARP_PROXY:
 else:
     _PROXIES = None
 
+logging.Formatter.converter = time.localtime
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",

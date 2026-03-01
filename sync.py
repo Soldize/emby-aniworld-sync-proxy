@@ -32,6 +32,7 @@ API_BASE = f"http://localhost:{API_PORT}"
 META_BASE = f"http://localhost:{META_PORT}"
 PROXY_BASE = BASE_URL if BASE_URL else f"http://localhost:{PROXY_PORT}"
 
+logging.Formatter.converter = time.localtime
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"

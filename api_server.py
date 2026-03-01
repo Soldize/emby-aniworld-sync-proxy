@@ -49,6 +49,7 @@ _last_request_time = 0.0
 _detail_sync_running = False
 
 
+logging.Formatter.converter = time.localtime
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("aniworld-api")
 

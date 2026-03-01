@@ -18,6 +18,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import time
 import threading
 import time
 import uuid
@@ -229,6 +230,7 @@ def _rewrite_m3u8(content, base_url, session_id, proxy_base):
     return '\n'.join(result)
 
 
+logging.Formatter.converter = time.localtime
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
