@@ -11,8 +11,13 @@ Anime-Streaming von aniworld.to in Emby - als native TV-Show Library.
 - **Passwort-Schutz:** Dashboard Login mit SHA-256 Auth
 - **API Server:** Scrapt aniworld.to, cached Episoden + Stream-URLs
 - **Metadata Server:** AniList/MAL/AniDB Metadata, Cover-Bilder, Genres, Ratings
-- **Stream Proxy:** HLS-Streams werden durch den Proxy geleitet (Retry bei fehlenden Segmenten, kein Bild/Ton Desync)
-- **WARP Proxy:** Optional Cloudflare WARP als SOCKS5 Proxy (umgeht Datacenter-IP-Blocking bei Hostern wie Vidmoly)
+- **Stream Proxy:** HLS-Streams werden durch den Proxy geleitet (Retry bei fehlenden Segmenten, kein Bild/Ton Desync, Segment Pre-Fetch Buffer)
+- **Stream-Token Auth:** Optionaler Token-Schutz für alle Stream-Endpoints (403 ohne Token)
+- **Externer Zugriff:** Konfigurierbare Base-URL für Reverse-Proxy Setup (Windows/Samsung/iOS Apps)
+- **Dashboard Split:** Dashboard auf separatem Port (nur localhost, Tunnel-Zugang) - Proxy-Port bleibt public
+- **WARP Proxy:** Cloudflare WARP als SOCKS5 Proxy (nur für Hoster, nicht für aniworld.to)
+- **WARP Health-Check:** Automatischer Check alle 15 Min, Reconnect nur wenn niemand schaut
+- **Async Playwright:** Browser Pool mit echtem Parallelismus (kein greenlet Thread-Problem)
 - **Sync Service:** Erstellt .strm/.nfo Dateien für Emby Library
 - **Standalone Installer:** Eine Datei, interaktives Menü, Auto-Update von GitHub
 - **Kein Plugin nötig:** Alles über Standard-Emby-Bibliothek
@@ -102,8 +107,9 @@ Nach der Installation erreichbar unter: **http://localhost:5081/**
 |---------|------|-------------|
 | `aniworld-api` | 5080 | API Server (Scraping, Stream-Resolution) |
 | `aniworld-metadata` | 5090 | Metadata Server (AniList/MAL/AniDB) |
-| `aniworld-proxy` | 5081 | Stream Proxy + Web-Dashboard |
+| `aniworld-proxy` | 5081 | Stream Proxy (public) + Dashboard (private, wenn `dashboard_port` gesetzt) |
 | `aniworld-sync.timer` | - | Täglicher Sync (03:00) |
+| `warp-health-check.timer` | - | WARP Connectivity Check (alle 15 Min) |
 
 ## Ersteinrichtung
 
@@ -114,6 +120,41 @@ Nach der Installation erreichbar unter: **http://localhost:5081/**
 5. **Sync starten** im Dashboard - generiert .strm/.nfo Dateien
 6. **Emby Library:** Wird optional bei Installation automatisch angelegt, oder manuell (Typ: TV-Sendungen, Pfad: `/media/aniworld`)
 7. **Auto Library Scan:** Wenn `[emby]` Section in Config vorhanden, wird nach jedem Sync automatisch ein Emby Library Scan getriggert
+
+## Externer Zugriff (Windows/Samsung/iOS Apps)
+
+Standardmäßig nutzen .strm Files `http://localhost:PORT` - das funktioniert nur für Browser und Android (Emby proxied den Stream). Für **Windows App, Samsung TV, iOS** etc. brauchen die Clients direkten Zugriff auf den Stream-Proxy.
+
+### Setup mit Reverse-Proxy
+
+1. **Domain/Subdomain** einrichten (z.B. `proxy.stream.example.com`)
+2. **Reverse-Proxy** (nginx/Caddy/Traefik) auf den Proxy-Port weiterleiten
+3. **Config anpassen** (`/etc/aniworld/config.ini`):
+
+```ini
+[proxy]
+port = 5081
+base_url = https://proxy.stream.example.com
+stream_token = mein-geheimer-token-hier
+dashboard_port = 5082
+```
+
+4. **STRM-Sync** einmal laufen lassen (damit alle .strm Files die neue URL bekommen)
+
+### Was die Optionen machen
+
+| Option | Beschreibung |
+|--------|-------------|
+| `base_url` | Externe URL für .strm + m3u8 (ohne trailing `/`) |
+| `stream_token` | Auth-Token, wird als `?token=...` an alle URLs gehängt. Ohne Token → 403 |
+| `dashboard_port` | Dashboard auf eigenem Port (nur 127.0.0.1). Proxy-Port bleibt public |
+
+### Port-Aufteilung
+
+| Port | Bind | Zugriff | Inhalt |
+|------|------|---------|--------|
+| 5081 (proxy) | 0.0.0.0 | Public (via Reverse-Proxy) | `/play/*`, `/stream/*`, `/health` |
+| 5082 (dashboard) | 127.0.0.1 | Nur lokal/Tunnel | Dashboard, Login, API, Config |
 
 ## Nützliche Befehle
 
@@ -152,7 +193,7 @@ Die Config (`/etc/aniworld/config.ini`) enthält folgende Sektionen:
 | `[api]` | API Server Port, DB-Pfad |
 | `[metadata]` | Metadata Server Port, DB-Pfad, Covers |
 | `[anidb]` | AniDB Client Name + Version (optional, für Episodentitel) |
-| `[proxy]` | Proxy/Dashboard Port, WARP SOCKS5 Proxy (optional) |
+| `[proxy]` | Proxy Port, Dashboard Port, Base-URL, Stream-Token, WARP, Pre-Fetch |
 | `[sync]` | Media-Pfad für .strm/.nfo |
 | `[preferences]` | Sprache, Hoster-Präferenz |
 | `[emby]` | Emby URL + API-Key für Auto Library Scan (optional) |

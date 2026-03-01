@@ -17,6 +17,15 @@ anidb_titles_path = /opt/aniworld/data/anidb-titles.xml.gz
 port = 5081
 # Segment Pre-Fetch Buffer (Anzahl Segmente die vorgeladen werden, 0 = deaktiviert)
 prefetch_segments = 5
+# Externe URL für .strm Files + m3u8 Playlists (leer = http://localhost:PORT)
+# Nötig wenn Clients von aussen zugreifen (z.B. Windows/Samsung App via Reverse-Proxy)
+# base_url = https://proxy.stream.example.com
+# Stream-Token: Authentifizierung für /play/ und /stream/ Endpoints (leer = kein Auth)
+# Ohne gültigen Token gibt es 403 Forbidden
+# stream_token = EIN_LANGER_ZUFALLS_STRING
+# Dashboard auf separatem Port (nur 127.0.0.1, Tunnel-Zugang)
+# Wenn gesetzt: Proxy-Port ist public (nur Streams), Dashboard-Port ist private
+# dashboard_port = 5082
 
 [sync]
 # Pfad für .strm/.nfo Dateien (Emby Library zeigt hierhin)

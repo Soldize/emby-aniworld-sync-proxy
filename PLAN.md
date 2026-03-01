@@ -171,8 +171,8 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] httpx async HTTP Client
 
 #### Cloudflare WARP Proxy ✅
-- [x] SOCKS5 Proxy-Support in api_server.py (requests) + proxy.py (httpx)
-- [x] Playwright mit Proxy-Arg für VOE Headless-Browser
+- [x] SOCKS5 Proxy-Support nur für Hoster (VOE/Vidmoly), NICHT für aniworld.to
+- [x] Playwright mit Proxy-Arg für Headless-Browser
 - [x] Config: `[proxy] warp_socks5 = socks5://127.0.0.1:40000`
 - [x] Env-Variable `WARP_PROXY` als Alternative
 - [x] requirements.txt: `requests[socks]` + `httpx[socks]`
@@ -180,7 +180,7 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] Installer: Menüpunkt 9 (WARP installieren/verbinden/Status)
 - [x] Installer: Self-Update, Versionsanzeige im Header
 - [x] Dashboard: WARP Status-Karte (online/offline + Cloudflare-IP)
-- [x] Dashboard: Hoster Health Live-Check (Online/Offline statt Cache-Ratio)
+- [x] Dashboard: Hoster Health Live-Check (nur VOE + Vidmoly)
 
 #### Sonstiges
 - [x] GitHub Release erstellen (v1.0.0)
@@ -240,8 +240,29 @@ Ersetzt das Channel-Plugin durch einen Strm-File-Ansatz:
 - [x] JS-Eval Fallback wenn Network-Intercept nichts findet
 - [x] Auto-Cleanup: Browser schließt nach 5min Idle
 - [x] Crash-Recovery: bei disconnected Browser wird automatisch neuer gestartet
-- [x] Alle Hoster nutzen den Pool als Fallback: VOE, Filemoon, Vidmoly, Streamtape, Doodstream, Speedfiles, Unknown
 - [x] Erwartete Performance: ~1-1.5s statt ~4s pro Stream-Resolution
 - [x] VOE: Regex permanent broken (WASM-Obfuskation seit Feb 2026), Playwright-only
+
+#### Async Playwright Pool (ersetzt greenlet-basiertes Pool) ✅
+- [x] playwright.async_api statt sync_api (kein greenlet Thread-Problem mehr)
+- [x] Dedizierter asyncio Event-Loop Thread für alle Playwright-Operationen
+- [x] Echte Parallelität: Mehrere Browser-Tabs gleichzeitig (statt seriell via Lock)
+- [x] Hoster auf VOE + Vidmoly reduziert (Filemoon, Doodstream, Streamtape, Speedfiles, Luluvdo, Vidoza entfernt)
+
+#### WARP Optimierung ✅
+- [x] aniworld.to Scraping geht direkt ohne WARP (kein "Host unreachable" mehr)
+- [x] WARP nur noch für Hoster-Resolution (Playwright -> VOE/Vidmoly)
+- [x] WARP Health-Check alle 15 Min (systemd Timer)
+- [x] Reconnect nur wenn WARP unhealthy UND keine aktiven Streams laufen
+- [x] Installer installiert Health-Check Timer automatisch
+
+#### Externer Zugriff / Reverse-Proxy ✅
+- [x] Konfigurierbare `base_url` für .strm Files + m3u8 URLs (statt localhost)
+- [x] `stream_token` Auth für /play/ und /stream/ Endpoints (403 ohne Token)
+- [x] Token wird in alle m3u8 Segment-URLs eingebettet
+- [x] Dashboard auf separatem Port (nur 127.0.0.1, Tunnel-Zugang)
+- [x] Proxy-Port public (0.0.0.0), Dashboard-Port private
+- [x] Abwärtskompatibel (ohne Config = altes Verhalten)
+- [x] Behebt: Windows App + Samsung TV App konnten keine Streams abspielen
 
 ### 🔨 Offen
