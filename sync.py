@@ -260,13 +260,14 @@ def write_strm(strm_path, slug, season, episode):
 def sync_anime(anime, metadata):
     """Sync one anime series: create dirs, .strm, .nfo, covers."""
     slug = anime.get("slug", "")
-    name = anime.get("name", slug)
-    safe_name = safe_filename(name)
+    name = anime.get("name") or slug
+    # Folder always uses slug for consistency
+    safe_name = safe_filename(slug)
     show_dir = os.path.join(MEDIA_PATH, safe_name)
     os.makedirs(show_dir, exist_ok=True)
 
-    # Write tvshow.nfo
-    write_tvshow_nfo(show_dir, name, metadata)
+    # Write tvshow.nfo (title from metadata, not slug)
+    write_tvshow_nfo(show_dir, slug, metadata)
 
     # Download cover
     cover_url = None
