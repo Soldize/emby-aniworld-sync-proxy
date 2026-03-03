@@ -119,6 +119,10 @@ def init_db():
         conn.execute("ALTER TABLE metadata ADD COLUMN status TEXT")
     except Exception:
         pass  # already exists
+    try:
+        conn.execute("ALTER TABLE metadata ADD COLUMN title_de TEXT")
+    except Exception:
+        pass  # already exists
 
     # New table: per-episode metadata (from AniDB)
     conn.execute("""
