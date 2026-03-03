@@ -2650,12 +2650,12 @@ if __name__ == "__main__":
         # Run dashboard on localhost only (tunnel access)
         dash_thread = threading.Thread(
             target=uvicorn.run,
-            kwargs={"app": app, "host": "127.0.0.1", "port": DASHBOARD_PORT, "log_level": "info"},
+            kwargs={"app": app, "host": "127.0.0.1", "port": DASHBOARD_PORT, "log_level": "warning"},
             daemon=True
         )
         dash_thread.start()
         # Run proxy on all interfaces (public)
-        uvicorn.run(proxy_app, host="0.0.0.0", port=PROXY_PORT, log_level="info")
+        uvicorn.run(proxy_app, host="0.0.0.0", port=PROXY_PORT, log_level="warning")
     else:
         # Single port mode (original behavior)
         log.info(f"Starting AniWorld Proxy + Dashboard on port {PROXY_PORT}")
@@ -2665,4 +2665,4 @@ if __name__ == "__main__":
         if STREAM_TOKEN:
             log.info(f"Stream token auth: enabled")
         log.info(f"Dashboard: http://localhost:{PROXY_PORT}/")
-        uvicorn.run(app, host="0.0.0.0", port=PROXY_PORT, log_level="info")
+        uvicorn.run(app, host="0.0.0.0", port=PROXY_PORT, log_level="warning")
